@@ -1,0 +1,18 @@
+# Chạy PostgreSQL + PostGIS bằng Docker, không cần cài tay.
+# Các file .sql trong ./db được chạy TỰ ĐỘNG lần đầu container khởi tạo (theo thứ tự tên file).
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: bds_postgis
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: bds_gis
+    ports:
+      - "5431:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d:ro
+
+volumes:
+  pgdata:

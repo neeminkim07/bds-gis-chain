@@ -1,0 +1,20 @@
+{
+  "name": "bds-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backend Express cho hệ thống BĐS GIS + Blockchain",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "make-sample": "node scripts/make-sample-geojson.js",
+    "import": "node scripts/import-geojson.js",
+    "check": "node scripts/check-data.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "pg": "^8.12.0"
+  }
+}
