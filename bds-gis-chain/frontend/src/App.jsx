@@ -1,5 +1,8 @@
 import React from 'react';
 import './index.css';
+import GISMapPage from './pages/GISMapPage.jsx';
+import PropertyManagementPage from './pages/PropertyManagementPage.jsx';
+import AuthPage from './pages/AuthPage.jsx';
 
 const destinations = [
   {
@@ -56,7 +59,7 @@ function LandingPage() {
     <main className="relative min-h-screen overflow-hidden bg-canvas text-slate-100">
       <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_-15%,rgba(110,128,255,0.15),transparent_55%)]" />
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 pb-8 pt-6 sm:px-8 lg:px-12">
-        <header className="flex items-center justify-between border-b border-white/[0.08] pb-5">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.08] pb-5">
           <a href="/" className="flex items-center gap-3" aria-label="GIS Chain, về trang chủ">
             <span className="grid h-10 w-10 place-items-center rounded-xl border border-indigo-300/20 bg-indigo-400/10 text-sm font-semibold tracking-tight text-indigo-200">GC</span>
             <span>
@@ -64,10 +67,14 @@ function LandingPage() {
               <span className="mt-0.5 block text-[11px] tracking-[0.16em] text-slate-500">BẤT ĐỘNG SẢN</span>
             </span>
           </a>
-          <span className="inline-flex items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs text-slate-400">
+          <span className="hidden items-center gap-2 rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs text-slate-400 sm:inline-flex">
             <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" />
             Môi trường demo
           </span>
+          <div className="flex items-center gap-2">
+            <a href="/login" className="rounded-lg px-3 py-2 text-sm text-slate-300 transition hover:text-white">Đăng nhập</a>
+            <a href="/register" className="rounded-lg border border-indigo-300/30 bg-indigo-300/10 px-3 py-2 text-sm text-indigo-100 transition hover:bg-indigo-300/15">Đăng ký</a>
+          </div>
         </header>
 
         <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center py-16 sm:py-20">
@@ -138,5 +145,9 @@ function ComingSoon({ path }) {
 
 export default function App() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
+  if (path === '/gis') return <GISMapPage />;
+  if (path === '/properties') return <PropertyManagementPage />;
+  if (path === '/login') return <AuthPage initialMode="login" />;
+  if (path === '/register') return <AuthPage initialMode="register" />;
   return path === '/' ? <LandingPage /> : <ComingSoon path={path} />;
 }
