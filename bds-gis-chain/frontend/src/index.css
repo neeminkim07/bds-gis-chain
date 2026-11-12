@@ -51,3 +51,14 @@ button, a { font: inherit; }
 
 .property-code-tooltip::before { display: none !important; }
 
+.gis-popup-link {
+  display: inline-flex;
+  margin-top: 9px;
+  color: #6366f1;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.gis-popup-link:hover { color: #4338ca; text-decoration: underline; }
+
