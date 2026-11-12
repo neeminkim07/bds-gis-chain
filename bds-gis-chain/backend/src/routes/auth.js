@@ -62,7 +62,7 @@ router.post('/login', async (req, res, next) => {
 
   try {
     const { rows } = await pool.query(
-      `SELECT id, username, email, password_hash, role
+      `SELECT id, username, email, password_hash, role, is_active
        FROM users
        WHERE lower(username) = lower($1) OR lower(email) = lower($1)
        LIMIT 1`,
@@ -70,7 +70,7 @@ router.post('/login', async (req, res, next) => {
     );
     const user = rows[0];
     const passwordMatches = user ? await verifyPassword(password, user.password_hash) : false;
-    if (!passwordMatches || !['Admin', 'User'].includes(user.role)) {
+    if (!passwordMatches || !user.is_active || !['Admin', 'User'].includes(user.role)) {
       const message = 'Thông tin đăng nhập không chính xác hoặc tài khoản không hợp lệ';
       return res.status(401).json({ ok: false, message, error: { code: 'INVALID_CREDENTIALS', message } });
     }
@@ -92,9 +92,36 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-router.get('/me', requireAuth, (req, res) => {
-  const { sub, username, role } = req.user;
-  return res.json({ ok: true, data: { user: { id: sub, username, role } } });
+router.get('/me', requireAuth, async (req, res, next) => {
+  try {
+    const { rows } = await pool.query('SELECT id,username,email,role,wallet_address,is_active,created_at FROM users WHERE id=$1', [req.user.sub]);
+    if (!rows[0]) return res.status(401).json({ ok: false, message: 'Tài khoản không còn tồn tại', error: { code: 'UNAUTHORIZED', message: 'Tài khoản không còn tồn tại' } });
+    return res.json({ ok: true, data: { user: rows[0] } });
+  } catch (error) { return next(error); }
+});
+
+router.patch('/me', requireAuth, async (req, res, next) => {
+  const usernameInput = req.body?.username;
+  const emailInput = req.body?.email;
+  const username = typeof usernameInput === 'string' ? usernameInput.trim().toLowerCase() : '';
+  const email = typeof emailInput === 'string' ? emailInput.trim().toLowerCase() || null : emailInput == null ? null : '';
+  const updateEmail = emailInput !== undefined;
+  if (!USERNAME_RE.test(username)) return invalid(res, 'username phải dài 3–50 ký tự và chỉ chứa chữ cái, số, dấu chấm, gạch ngang hoặc gạch dưới');
+  if (email === '' || (email && (email.length > 254 || !EMAIL_RE.test(email)))) return invalid(res, 'email không đúng định dạng hoặc vượt quá 254 ký tự');
+
+  try {
+    const { rows } = await pool.query(`UPDATE users SET username=$2,email=CASE WHEN $4 THEN $3 ELSE email END WHERE id=$1
+      RETURNING id,username,email,role,wallet_address,is_active,created_at`, [req.user.sub, username, email, updateEmail]);
+    if (!rows[0]) return res.status(404).json({ ok: false, message: 'Không tìm thấy tài khoản', error: { code: 'NOT_FOUND', message: 'Không tìm thấy tài khoản' } });
+    return res.json({ ok: true, message: 'Đã cập nhật hồ sơ', data: { user: rows[0] } });
+  } catch (error) {
+    if (error.code === '23505') {
+      const isEmail = String(error.constraint || '').includes('email');
+      const message = isEmail ? 'Email đã được sử dụng' : 'Tên đăng nhập đã được sử dụng';
+      return res.status(409).json({ ok: false, message, error: { code: isEmail ? 'EMAIL_EXISTS' : 'USERNAME_EXISTS', message } });
+    }
+    return next(error);
+  }
 });
 
 module.exports = router;

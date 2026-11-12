@@ -8,12 +8,16 @@ CREATE TABLE IF NOT EXISTS users (
     id            SERIAL PRIMARY KEY,
     username      VARCHAR(50)  NOT NULL UNIQUE,
     email         VARCHAR(254),
+    wallet_address VARCHAR(128),
+    is_active     BOOLEAN NOT NULL DEFAULT TRUE,
     password_hash TEXT         NOT NULL,
     role          VARCHAR(10)  NOT NULL DEFAULT 'User'
                   CHECK (role IN ('Admin', 'User')),
     created_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(254);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_address VARCHAR(128);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower
     ON users (lower(username));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_lower
@@ -29,12 +33,35 @@ CREATE TABLE IF NOT EXISTS properties (
                CHECK (type IN ('house', 'apartment', 'land', 'commercial')),
     price      NUMERIC(16,0) CHECK (price >= 0),
     location   geometry(Point, 4326),
-    boundary   geometry(Polygon, 4326),
+    boundary   geometry(MultiPolygon, 4326),
+    document_status VARCHAR(50) NOT NULL DEFAULT 'Chưa cung cấp',
+    description TEXT,
     image_path VARCHAR(255),
     doc_path   VARCHAR(255),
     created_at TIMESTAMPTZ   NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ   NOT NULL DEFAULT now()
 );
+
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS document_status VARCHAR(50) NOT NULL DEFAULT 'Chưa cung cấp';
+ALTER TABLE properties ADD COLUMN IF NOT EXISTS description TEXT;
+
+-- Upgrade a previously created Polygon column in place. Rows are preserved.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM geometry_columns
+    WHERE f_table_schema = current_schema()
+      AND f_table_name = 'properties'
+      AND f_geometry_column = 'boundary'
+      AND type = 'POLYGON'
+  ) THEN
+    ALTER TABLE properties ALTER COLUMN boundary
+      TYPE geometry(MultiPolygon, 4326)
+      USING CASE WHEN boundary IS NULL THEN NULL
+        ELSE ST_Multi(boundary)::geometry(MultiPolygon, 4326) END;
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_properties_location_gist ON properties USING GIST (location);
 CREATE INDEX IF NOT EXISTS idx_properties_boundary_gist ON properties USING GIST (boundary);
 CREATE INDEX IF NOT EXISTS idx_properties_type ON properties (type);

@@ -57,7 +57,7 @@ const endpoints = [
   },
   {
     method: 'PATCH', path: '/api/auth/me', title: 'Cập nhật hồ sơ cá nhân', auth: true,
-    description: 'Request mà giao diện trang cá nhân đang chờ backend hỗ trợ. Chỉ cập nhật username/email; role không được thay đổi từ form người dùng.',
+    description: 'Cập nhật username/email hiện tại; role không được thay đổi từ form người dùng.',
     request: `{
   "username": "khiem_moi",
   "email": "khiem@example.com"
@@ -68,7 +68,55 @@ const endpoints = [
     "user": { "id": 1, "username": "khiem_moi", "email": "khiem@example.com", "role": "User" }
   }
 }`,
-    errors: '401 token không hợp lệ · 409 username/email đã tồn tại · hiện backend chưa triển khai route này',
+    errors: '400 dữ liệu không hợp lệ · 401 token không hợp lệ · 409 username/email đã tồn tại',
+  },
+  {
+    method: 'GET', path: '/api/users?page=1&limit=50&q=', title: 'Danh sách người dùng', auth: true,
+    description: 'Chỉ Admin được xem. Tìm theo username/email, có phân trang. Response không chứa password hoặc password_hash.',
+    response: `{
+  "ok": true,
+  "data": [
+    { "id": 2, "username": "test_user_01", "email": "test_user_01@example.com", "role": "User", "created_at": "..." }
+  ],
+  "pagination": { "page": 1, "limit": 50, "total": 1, "pages": 1 }
+}`,
+    errors: '401 token không hợp lệ · 403 chỉ Admin được truy cập',
+  },
+  {
+    method: 'POST', path: '/api/users', title: 'Tạo tài khoản (Admin)', auth: true,
+    description: 'Admin tạo tài khoản với mật khẩu ban đầu; backend lưu mật khẩu dạng scrypt hash.',
+    request: `{
+  "username": "new_user",
+  "email": "new@example.com",
+  "password": "mat-khau-dai-hon-12",
+  "role": "User",
+  "wallet_address": ""
+}`,
+    response: `{
+  "ok": true,
+  "data": { "id": 12, "username": "new_user", "role": "User", "is_active": true }
+}`,
+    errors: '400 dữ liệu không hợp lệ · 403 chỉ Admin được truy cập · 409 username/email đã tồn tại',
+  },
+  {
+    method: 'PATCH', path: '/api/users/:id', title: 'Sửa, phân quyền hoặc khóa tài khoản (Admin)', auth: true,
+    description: 'Nhận một hoặc nhiều trường username, email, role, wallet_address, is_active. Tài khoản bị khóa mất quyền truy cập ngay.',
+    request: `{
+  "role": "Admin",
+  "is_active": true,
+  "wallet_address": "0x..."
+}`,
+    response: `{
+  "ok": true,
+  "data": { "id": 12, "username": "new_user", "role": "Admin", "is_active": true }
+}`,
+    errors: '400 dữ liệu không hợp lệ · 403 chỉ Admin · 409 nếu tác động tới Admin cuối cùng hoặc username/email trùng',
+  },
+  {
+    method: 'DELETE', path: '/api/users/:id', title: 'Xóa tài khoản (Admin)', auth: true,
+    description: 'Xóa tài khoản khỏi database. Không thể xóa tài khoản đang đăng nhập hoặc Admin cuối cùng còn hoạt động.',
+    response: `{ "ok": true, "data": { "id": 12, "deleted": true } }`,
+    errors: '403 chỉ Admin · 404 không tìm thấy · 409 không thể xóa chính mình hoặc Admin cuối cùng',
   },
 ];
 
@@ -116,8 +164,8 @@ export default function ApiDocsPage() {
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Các endpoint dưới đây được đối chiếu với backend hiện tại. Trong môi trường phát triển, frontend gọi cùng origin và Vite chuyển tiếp `/api` tới `http://localhost:4000`.</p>
         </section>
 
-        <div className="mb-6 rounded-xl border border-amber-200/15 bg-amber-200/[0.04] p-4 text-sm leading-6 text-amber-100/80">
-          <strong className="font-medium text-amber-100">Trạng thái:</strong> Health check và xác thực đã có trong backend. `PATCH /api/auth/me` đang là contract đề xuất cho giao diện chỉnh hồ sơ; API CRUD BĐS/GIS chưa xuất hiện trong backend.
+        <div className="mb-6 rounded-xl border border-indigo-200/15 bg-indigo-200/[0.04] p-4 text-sm leading-6 text-indigo-100/80">
+          <strong className="font-medium text-indigo-100">Trạng thái:</strong> Các endpoint hiển thị ở đây đã được nối trong backend. API quản lý tài khoản chỉ dành cho Admin; tạo/sửa/khóa/xóa được lưu trực tiếp vào PostgreSQL.
         </div>
 
         <section className="space-y-4" aria-label="Danh sách API">

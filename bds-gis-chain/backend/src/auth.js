@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { promisify } = require('util');
+const pool = require('./db');
 
 const scrypt = promisify(crypto.scrypt);
 const PASSWORD_BYTES = 64;
@@ -69,14 +70,17 @@ function verifyToken(token) {
   }
 }
 
-function requireAuth(req, res, next) {
+async function requireAuth(req, res, next) {
   try {
     getSecret();
     const authorization = req.get('authorization') || '';
     const match = /^Bearer\s+(\S+)$/i.exec(authorization);
     const user = match && verifyToken(match[1]);
     if (!user) return res.status(401).json({ ok: false, message: 'Token không hợp lệ hoặc đã hết hạn', error: { code: 'UNAUTHORIZED', message: 'Token không hợp lệ hoặc đã hết hạn' } });
-    req.user = user;
+    const { rows } = await pool.query('SELECT id,username,role,is_active FROM users WHERE id=$1', [user.sub]);
+    const account = rows[0];
+    if (!account || !account.is_active) return res.status(403).json({ ok: false, message: 'Tài khoản đã bị khóa hoặc không còn tồn tại', error: { code: 'ACCOUNT_DISABLED', message: 'Tài khoản đã bị khóa hoặc không còn tồn tại' } });
+    req.user = { ...user, sub: account.id, username: account.username, role: account.role };
     return next();
   } catch (error) {
     const message = error.code === 'CONFIG_ERROR' ? error.message : 'Không thể xác thực yêu cầu';
