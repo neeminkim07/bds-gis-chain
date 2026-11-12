@@ -10,8 +10,10 @@ cd backend
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 # Dán secret vừa tạo vào JWT_SECRET trong backend/.env.
 npm install
-npm start
+npm run dev
 ```
+
+`npm run dev` dùng Nodemon: khi bạn lưu thay đổi trong backend, server tự khởi động lại. Dùng `npm start` khi muốn chạy server không có chế độ tự theo dõi file.
 
 `JWT_SECRET` cần là chuỗi ngẫu nhiên ít nhất 32 ký tự. Backend luôn đọc file `backend/.env` theo đường dẫn của mã nguồn, kể cả khi tiến trình được khởi chạy từ thư mục gốc; biến môi trường của hệ thống được ưu tiên nếu đã đặt. Không dùng giá trị placeholder trong môi trường chia sẻ.
 
@@ -66,6 +68,10 @@ Email hoặc username trùng trả HTTP 409; dữ liệu sai trả HTTP 400. M�
 
 Sai thông tin hoặc tài khoản có role không hợp lệ trả HTTP 401 với thông báo chung. Token HS256 hết hạn sau một giờ; gửi cho API được bảo vệ bằng `Authorization: Bearer <JWT>`.
 
+### Hồ sơ cá nhân
+
+`GET /api/auth/me` trả hồ sơ hiện tại theo tài khoản trong database. `PATCH /api/auth/me` nhận `username` và `email` (email có thể `null`) để cập nhật hồ sơ; username/email phải duy nhất.
+
 ### Quyền truy cập
 
 | Endpoint/nhóm | Quyền |
@@ -74,9 +80,14 @@ Sai thông tin hoặc tài khoản có role không hợp lệ trả HTTP 401 v�
 | `POST /api/auth/register` | Public |
 | `POST /api/auth/login` | Public |
 | `GET /api/auth/me` | User hoặc Admin, cần Bearer token |
-| Các route `/api/*` khác | Cần Bearer token mặc định |
-| `/api/admin/*` | Bearer token + role Admin |
+| `PATCH /api/auth/me` | User hoặc Admin, cần Bearer token |
+| `GET /api/users` | Admin, cần Bearer token; hỗ trợ tìm kiếm và phân trang |
+| `POST /api/users`, `PATCH /api/users/:id`, `DELETE /api/users/:id` | Admin quản lý tài khoản; không thể tự khóa/hạ quyền/xóa hoặc gỡ Admin cuối cùng |
+| `GET /api/properties*`, `GET /api/gis/*` | User hoặc Admin, cần Bearer token |
+| `POST`, `PUT`, `DELETE /api/properties*` | Bearer token + role Admin |
 
-Tại repo hiện tại, backend chỉ có health endpoint; chưa có route CRUD/GIS trong `server.js`. Các API khác đã bị chặn mặc định; namespace `/api/admin/*` yêu cầu role Admin. Middleware `requireAuth` và `requireRole` sẵn để gắn lên các route CRUD/GIS khi chúng được tích hợp. Không có tài khoản Admin mặc định hoặc API tự nâng quyền; Admin phải được cấp bởi người vận hành qua kênh quản trị database. Thay đổi role có hiệu lực khi token cũ hết hạn (tối đa một giờ), vì role nằm trong JWT.
+API CRUD hồ sơ và GIS được khai báo trong `backend/src/routes/`. Không có tài khoản Admin mặc định hoặc API công khai tự nâng quyền; Admin phải được cấp bởi người vận hành trực tiếp trong database. Thay đổi role có hiệu lực khi token cũ hết hạn (tối đa một giờ), vì role nằm trong JWT.
+
+Chi tiết endpoint, tham số lọc, định dạng GeoJSON và ví dụ request xem tại [API.md](API.md).
 
 Lỗi API dùng dạng `{ "ok": false, "error": { "code": "...", "message": "..." } }`. Lỗi database trả thông báo chung và không lộ query/credential.

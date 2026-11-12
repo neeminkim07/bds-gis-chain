@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import L from 'leaflet';
 import MainNavigation from '../components/MainNavigation.jsx';
-import { getCachedUser } from '../lib/authSession.js';
-import { DEMO_PROPERTIES_CHANGED, initialDemoProperties, loadDemoProperties, saveDemoProperties } from '../lib/demoProperties.js';
+import { getAuthToken, getCachedUser } from '../lib/authSession.js';
+import { initialDemoProperties } from '../lib/demoProperties.js';
 
 const typeLabels = {
   house: 'Nhà ở',
@@ -18,6 +18,46 @@ function formatPrice(value) {
   if (!value) return 'Chưa có giá';
   if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tỷ`;
   return `${money.format(value)} ₫`;
+}
+
+async function propertyApi(path, options = {}) {
+  const token = getAuthToken();
+  if (!token) throw new Error('Bạn cần đăng nhập để đọc hoặc chỉnh sửa hồ sơ.');
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.error?.message || body?.message || `API trả về HTTP ${response.status}.`);
+  return body;
+}
+
+function fromApiProperty(property) {
+  return {
+    ...property,
+    area: Number(property.area) || 0,
+    price: Number(property.price) || 0,
+    geometry: property.boundary || null,
+  };
+}
+
+async function loadApiProperties(signal) {
+  const all = [];
+  let page = 1;
+  let pages = 1;
+  do {
+    const params = new URLSearchParams({ page: String(page), limit: '100' });
+    const response = await propertyApi(`/api/properties?${params}`, { signal });
+    all.push(...(Array.isArray(response.data) ? response.data.map(fromApiProperty) : []));
+    pages = Number(response.pagination?.pages) || 1;
+    page += 1;
+  } while (page <= pages && !signal?.aborted);
+  return all;
 }
 
 function Icon({ name, className = 'h-4 w-4' }) {
@@ -51,9 +91,10 @@ function BoundaryEditor({ geometry, onChange }) {
   const mapRef = React.useRef(null);
   const layerRef = React.useRef(null);
   const onChangeRef = React.useRef(onChange);
-  const [points, setPoints] = useState(() => geometry?.type === 'Polygon'
-    ? (geometry.coordinates?.[0] || []).slice(0, -1).map(([lng, lat]) => [lat, lng])
-    : []);
+  const initialPolygon = geometry?.type === 'Polygon' ? geometry.coordinates : geometry?.coordinates?.[0] || [];
+  const [points, setPoints] = useState(() => (initialPolygon[0] || []).slice(0, -1).map(([lng, lat]) => [lat, lng]));
+  const [holes, setHoles] = useState(() => initialPolygon.slice(1));
+  const [extraPolygons, setExtraPolygons] = useState(() => geometry?.type === 'MultiPolygon' ? geometry.coordinates.slice(1) : []);
 
   useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
 
@@ -69,10 +110,8 @@ function BoundaryEditor({ geometry, onChange }) {
     map.on('click', (event) => setPoints((current) => [...current, [event.latlng.lat, event.latlng.lng]]));
     mapRef.current = map;
     layerRef.current = layers;
-    if (points.length >= 3) {
-      const bounds = L.latLngBounds(points);
-      if (bounds.isValid()) map.fitBounds(bounds.pad(0.25), { maxZoom: 17 });
-    }
+    const bounds = geometry ? L.geoJSON(geometry).getBounds() : L.latLngBounds(points);
+    if (bounds.isValid()) map.fitBounds(bounds.pad(0.25), { maxZoom: 17 });
     return () => { map.remove(); mapRef.current = null; layerRef.current = null; };
   }, []);
 
@@ -81,21 +120,24 @@ function BoundaryEditor({ geometry, onChange }) {
     if (!layers) return;
     layers.clearLayers();
     if (points.length >= 3) {
-      L.polygon(points, { color: '#a5b4fc', weight: 3, fillColor: '#818cf8', fillOpacity: 0.22 }).addTo(layers);
+      const coordinates = points.map(([lat, lng]) => [lng, lat]);
+      coordinates.push(coordinates[0]);
+      const editedPolygon = [coordinates, ...holes];
+      const isMulti = geometry?.type === 'MultiPolygon' || extraPolygons.length > 0;
+      const nextGeometry = isMulti
+        ? { type: 'MultiPolygon', coordinates: [editedPolygon, ...extraPolygons] }
+        : { type: 'Polygon', coordinates: editedPolygon };
+      L.geoJSON(nextGeometry, { style: { color: '#a5b4fc', weight: 3, fillColor: '#818cf8', fillOpacity: 0.22 } }).addTo(layers);
+      onChangeRef.current(nextGeometry);
     } else {
       points.forEach((point, index) => L.circleMarker(point, { radius: 5, color: '#0b0e14', weight: 2, fillColor: '#c4b5fd', fillOpacity: 1 }).bindTooltip(`Điểm ${index + 1}`).addTo(layers));
       if (points.length > 1) L.polyline(points, { color: '#a5b4fc', dashArray: '5 5' }).addTo(layers);
+      onChangeRef.current(null);
     }
-    const coordinates = points.map(([lat, lng]) => [lng, lat]);
-    if (coordinates.length >= 3) coordinates.push(coordinates[0]);
-    const nextGeometry = coordinates.length >= 4
-      ? { type: 'Polygon', coordinates: [coordinates] }
-      : null;
-    onChangeRef.current(nextGeometry);
-  }, [points]);
+  }, [points, holes, extraPolygons, geometry?.type]);
 
   return <div className="sm:col-span-2">
-    <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-medium text-slate-300">Ranh giới thửa</p><p className="mt-1 text-[11px] text-slate-500">Bấm bản đồ để thêm đỉnh polygon. Cần ít nhất 3 điểm.</p></div><div className="flex gap-2"><button type="button" disabled={!points.length} onClick={() => setPoints((current) => current.slice(0, -1))} className="rounded-md border border-white/10 px-2.5 py-1.5 text-[11px] text-slate-300 disabled:opacity-40">Hoàn tác</button><button type="button" disabled={!points.length} onClick={() => setPoints([])} className="rounded-md border border-white/10 px-2.5 py-1.5 text-[11px] text-slate-300 disabled:opacity-40">Xóa ranh giới</button></div></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-xs font-medium text-slate-300">Ranh giới thửa</p><p className="mt-1 text-[11px] text-slate-500">Bấm bản đồ để thêm đỉnh polygon. Cần ít nhất 3 điểm.</p></div><div className="flex gap-2"><button type="button" disabled={!points.length} onClick={() => setPoints((current) => current.slice(0, -1))} className="rounded-md border border-white/10 px-2.5 py-1.5 text-[11px] text-slate-300 disabled:opacity-40">Hoàn tác</button><button type="button" disabled={!points.length} onClick={() => { setPoints([]); setHoles([]); setExtraPolygons([]); }} className="rounded-md border border-white/10 px-2.5 py-1.5 text-[11px] text-slate-300 disabled:opacity-40">Xóa ranh giới</button></div></div>
     <div ref={mapNode} className="mt-3 h-64 overflow-hidden rounded-xl border border-white/[0.1] bg-[#171b24]" aria-label="Bản đồ vẽ ranh giới hồ sơ" />
     <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500"><span>{points.length} điểm đã chọn</span><span>EPSG:4326 · Esri</span></div>
   </div>;
@@ -107,27 +149,36 @@ function PropertyModal({ mode, property, existingCodes, canManage, onClose, onEd
     : { code: '', owner_name: '', address: '', area: '', price: '', type: 'house', description: '', document_status: 'Chưa cung cấp' });
   const [geometry, setGeometry] = useState(() => mode === 'edit' ? property.geometry : null);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
 
-  function submit(event) {
+  async function submit(event) {
     event.preventDefault();
     const code = mode === 'edit' ? property.code : form.code.trim() || `DEMO-${Date.now().toString().slice(-5)}`;
     if (mode === 'create' && existingCodes.includes(code)) {
       setFormError(`Mã ${code} đã tồn tại. Hãy chọn mã khác.`);
       return;
     }
-    const ring = geometry?.type === 'Polygon' ? geometry.coordinates?.[0] : null;
+    const ring = geometry?.type === 'Polygon' ? geometry.coordinates?.[0] : geometry?.type === 'MultiPolygon' ? geometry.coordinates?.[0]?.[0] : null;
     if (!ring || ring.length < 4) {
       setFormError('Vẽ ranh giới thửa bằng ít nhất 3 điểm trước khi lưu.');
       return;
     }
     const nextProperty = { ...property, ...form, code, area: Number(form.area), price: Number(form.price) || 0, geometry };
-    if (mode === 'edit') onUpdate(property.code, nextProperty);
-    else onCreate(nextProperty);
-    setSaved(true);
-    window.setTimeout(onClose, 900);
+    setSaving(true);
+    setFormError('');
+    try {
+      if (mode === 'edit') await onUpdate(property.code, nextProperty);
+      else await onCreate(nextProperty);
+      setSaved(true);
+      window.setTimeout(onClose, 700);
+    } catch (error) {
+      setFormError(error.message || 'Không lưu được hồ sơ vào database.');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -135,7 +186,7 @@ function PropertyModal({ mode, property, existingCodes, canManage, onClose, onEd
       <section role="dialog" aria-modal="true" aria-labelledby="property-dialog-title" className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-line bg-[#11141c] p-5 shadow-2xl sm:p-7">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.16em] text-indigo-200">{mode === 'detail' ? 'Thông tin hồ sơ' : 'Dữ liệu demo'}</p>
+            <p className="text-xs uppercase tracking-[0.16em] text-indigo-200">{mode === 'detail' ? 'Thông tin hồ sơ' : 'Database PostgreSQL'}</p>
             <h2 id="property-dialog-title" className="mt-2 text-xl font-medium text-white">{mode === 'detail' ? property.code : mode === 'edit' ? `Sửa hồ sơ ${property.code}` : 'Thêm hồ sơ bất động sản'}</h2>
           </div>
           <button type="button" onClick={onClose} className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white" aria-label="Đóng"><Icon name="close" /></button>
@@ -157,7 +208,8 @@ function PropertyModal({ mode, property, existingCodes, canManage, onClose, onEd
           </dl>
           <div className="mt-4 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4"><p className="text-xs text-slate-500">Mô tả</p><p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">{property.description || 'Chưa có mô tả.'}</p></div>
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
-            {!canManage ? <p className="text-xs text-slate-500">Chỉ tài khoản Admin được sửa hoặc xóa hồ sơ.</p> : confirmDelete ? <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-300/15 bg-rose-300/[0.04] p-3"><p className="text-sm text-rose-100/80">Xóa {property.code} khỏi dữ liệu demo đã lưu trên trình duyệt?</p><div className="flex gap-2"><button type="button" onClick={() => setConfirmDelete(false)} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5">Hủy</button><button type="button" onClick={() => onDelete(property.code)} className="rounded-lg bg-rose-400 px-3 py-2 text-xs font-medium text-slate-950 hover:bg-rose-300">Xác nhận xóa</button></div></div> : <><p className="text-xs text-slate-500">Thay đổi được lưu trong trình duyệt này, chưa gửi lên backend.</p><div className="flex gap-2"><button type="button" onClick={() => setConfirmDelete(true)} className="rounded-lg border border-rose-300/20 px-3 py-2 text-sm text-rose-200 hover:bg-rose-300/[0.08]">Xóa</button><button type="button" onClick={onEdit} className="rounded-lg bg-indigo-300 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-indigo-200">Sửa hồ sơ</button></div></>}
+            {!canManage ? <p className="text-xs text-slate-500">Chỉ tài khoản Admin được sửa hoặc xóa hồ sơ.</p> : confirmDelete ? <div className="flex w-full flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-300/15 bg-rose-300/[0.04] p-3"><p className="text-sm text-rose-100/80">Xóa {property.code} khỏi database?</p><div className="flex gap-2"><button type="button" onClick={() => setConfirmDelete(false)} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-300 hover:bg-white/5">Hủy</button><button type="button" disabled={saving} onClick={async () => { try { setSaving(true); await onDelete(property.code); } catch (error) { setFormError(error.message || 'Không xóa được hồ sơ.'); } finally { setSaving(false); } }} className="rounded-lg bg-rose-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-50">{saving ? 'Đang xóa…' : 'Xác nhận xóa'}</button></div></div> : <><p className="text-xs text-slate-500">Thay đổi sẽ được lưu vào PostgreSQL.</p><div className="flex gap-2"><button type="button" onClick={() => setConfirmDelete(true)} className="rounded-lg border border-rose-300/20 px-3 py-2 text-sm text-rose-200 hover:bg-rose-300/[0.08]">Xóa</button><button type="button" onClick={onEdit} className="rounded-lg bg-indigo-300 px-4 py-2 text-sm font-medium text-slate-950 hover:bg-indigo-200">Sửa hồ sơ</button></div></>}
+            {formError && <p role="alert" className="mt-3 w-full text-xs text-rose-200">{formError}</p>}
           </div>
           </>
         ) : (
@@ -172,7 +224,7 @@ function PropertyModal({ mode, property, existingCodes, canManage, onClose, onEd
             <label className="text-xs text-slate-400 sm:col-span-2">Mô tả<textarea name="description" value={form.description || ''} onChange={update} rows="3" maxLength="1000" placeholder="Thông tin mô tả thêm về hồ sơ…" className="mt-2 w-full resize-y rounded-lg border border-white/10 bg-[#0b0e14] px-3 py-2.5 text-sm text-white outline-none placeholder:text-slate-600 focus:border-indigo-300/50" /></label>
             <BoundaryEditor key={`${mode}-${property?.code ?? 'new'}`} geometry={geometry} onChange={setGeometry} />
             {formError && <p role="alert" className="text-xs text-rose-300 sm:col-span-2">{formError}</p>}
-            <div className="flex items-center justify-between gap-4 pt-2 sm:col-span-2"><p className="text-xs leading-5 text-slate-500">Lưu trong trình duyệt này; chưa đồng bộ lên backend hoặc thiết bị khác.</p><button type="submit" className="shrink-0 rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-indigo-200">{saved ? (mode === 'edit' ? 'Đã cập nhật' : 'Đã thêm') : (mode === 'edit' ? 'Lưu thay đổi' : 'Thêm hồ sơ')}</button></div>
+            <div className="flex items-center justify-between gap-4 pt-2 sm:col-span-2"><p className="text-xs leading-5 text-slate-500">Lưu trực tiếp vào PostgreSQL/PostGIS.</p><button type="submit" disabled={saving} className="shrink-0 rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-indigo-200 disabled:opacity-50">{saving ? 'Đang lưu…' : saved ? (mode === 'edit' ? 'Đã cập nhật' : 'Đã thêm') : (mode === 'edit' ? 'Lưu thay đổi' : 'Thêm hồ sơ')}</button></div>
           </form>
         )}
       </section>
@@ -181,8 +233,11 @@ function PropertyModal({ mode, property, existingCodes, canManage, onClose, onEd
 }
 
 export default function PropertyManagementPage({ detailCode = '' }) {
-  const [properties, setProperties] = useState(loadDemoProperties);
-  const [storageError, setStorageError] = useState('');
+  const [properties, setProperties] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [pageError, setPageError] = useState('');
+  const [operationError, setOperationError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [query, setQuery] = useState('');
   const [types, setTypes] = useState([]);
   const [minArea, setMinArea] = useState('');
@@ -198,6 +253,23 @@ export default function PropertyManagementPage({ detailCode = '' }) {
   const currentUser = getCachedUser();
   const canManage = currentUser?.role === 'Admin';
   const pageSize = 10;
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setPageError('');
+    loadApiProperties(controller.signal)
+      .then((items) => { if (!controller.signal.aborted) setProperties(items); })
+      .catch((error) => { if (!controller.signal.aborted) setPageError(error.message || 'Không tải được hồ sơ từ database.'); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  useEffect(() => {
+    if (!detailCode) return;
+    const found = properties.find((property) => property.code === detailCode);
+    if (found) setDialogProperty(found);
+  }, [detailCode, properties]);
 
   const filtered = useMemo(() => properties.filter((property) => {
     const matchesType = types.length === 0 || types.includes(property.type);
@@ -224,38 +296,56 @@ export default function PropertyManagementPage({ detailCode = '' }) {
     if (page > pageCount) setPage(pageCount);
   }, [page, pageCount]);
 
-  useEffect(() => {
-    const saved = saveDemoProperties(properties);
-    setStorageError(saved ? '' : 'Trình duyệt không cho phép lưu dữ liệu demo; thay đổi có thể mất khi tải lại trang.');
-  }, [properties]);
-
-  useEffect(() => {
-    const sync = (event) => setProperties(Array.isArray(event.detail) ? event.detail : loadDemoProperties());
-    window.addEventListener(DEMO_PROPERTIES_CHANGED, sync);
-    return () => window.removeEventListener(DEMO_PROPERTIES_CHANGED, sync);
-  }, []);
-
   function changeFilter(update) {
     update();
     setPage(1);
   }
 
-  function addProperty(property) {
-    setProperties((current) => [property, ...current]);
-    setPage(1);
+  async function addProperty(property) {
+    setOperationError('');
+    try {
+      const body = await propertyApi('/api/properties', { method: 'POST', body: JSON.stringify({ ...property, boundary: property.geometry, geometry: undefined }) });
+      const saved = fromApiProperty(body.data);
+      setProperties((current) => [saved, ...current.filter((item) => item.code !== saved.code)]);
+      setPage(1);
+      return saved;
+    } catch (error) {
+      setOperationError(error.message || 'Không tạo được hồ sơ trong database.');
+      throw error;
+    }
   }
 
-  function updateProperty(code, updated) {
-    setProperties((current) => current.map((property) => property.code === code ? updated : property));
-    setDialogProperty(updated);
+  async function updateProperty(code, updated) {
+    const existing = properties.find((property) => property.code === code);
+    if (!existing?.id) throw new Error('Không xác định được ID database của hồ sơ này. Hãy tải lại danh sách.');
+    setOperationError('');
+    try {
+      const body = await propertyApi(`/api/properties/${existing.id}`, { method: 'PUT', body: JSON.stringify({ ...updated, boundary: updated.geometry, geometry: undefined }) });
+      const saved = fromApiProperty(body.data);
+      setProperties((current) => current.map((property) => property.id === saved.id ? saved : property));
+      setDialogProperty(saved);
+      return saved;
+    } catch (error) {
+      setOperationError(error.message || 'Không cập nhật được hồ sơ trong database.');
+      throw error;
+    }
   }
 
-  function deleteProperty(code) {
-    const nextProperties = properties.filter((property) => property.code !== code);
-    setProperties(nextProperties);
-    saveDemoProperties(nextProperties);
-    setDialogProperty(undefined);
-    setDialogMode(undefined);
+  async function deleteProperty(code) {
+    const existing = properties.find((property) => property.code === code);
+    if (!existing?.id) throw new Error('Không xác định được ID database của hồ sơ này. Hãy tải lại danh sách.');
+    setOperationError('');
+    try {
+      await propertyApi(`/api/properties/${existing.id}`, { method: 'DELETE' });
+      setProperties((current) => current.filter((property) => property.id !== existing.id));
+      setDialogProperty(undefined);
+      setDialogMode(undefined);
+      if (detailCode) window.location.assign('/properties');
+      return true;
+    } catch (error) {
+      setOperationError(error.message || 'Không xóa được hồ sơ trong database.');
+      throw error;
+    }
   }
 
   function closeDialog() {
@@ -263,15 +353,21 @@ export default function PropertyManagementPage({ detailCode = '' }) {
     setDialogMode(undefined);
   }
 
-  function restoreSampleData() {
-    if (!window.confirm('Khôi phục 100 hồ sơ mẫu? Thao tác này sẽ thay dữ liệu demo đã lưu trong trình duyệt.')) return;
-    setProperties(initialDemoProperties);
-    setPage(1);
-    setQuery('');
-    setTypes([]);
-    setMinArea('');
-    setMaxArea('');
-    setVerifyStatus('all');
+  async function restoreSampleData() {
+    if (!window.confirm('Cập nhật 100 mã hồ sơ mẫu vào database? Hồ sơ khác trong database sẽ được giữ nguyên.')) return;
+    setOperationError('');
+    try {
+      await propertyApi('/api/properties/bulk', { method: 'POST', body: JSON.stringify({ properties: initialDemoProperties.map(({ geometry, ...property }) => ({ ...property, boundary: geometry })) }) });
+      setPage(1);
+      setQuery('');
+      setTypes([]);
+      setMinArea('');
+      setMaxArea('');
+      setVerifyStatus('all');
+      setReloadKey((key) => key + 1);
+    } catch (error) {
+      setOperationError(error.message || 'Không khôi phục được dữ liệu mẫu vào database.');
+    }
   }
 
   function toggleType(typeKey) {
@@ -294,36 +390,38 @@ export default function PropertyManagementPage({ detailCode = '' }) {
 
   if (detailCode) {
     const property = requestedProperty;
+    if (loading) return <main className="min-h-screen bg-canvas px-5 pt-20 text-center text-sm text-slate-400">Đang tải hồ sơ từ PostgreSQL…</main>;
+    if (pageError) return <main className="min-h-screen bg-canvas px-5 pt-20 text-center"><p className="text-sm text-rose-200">{pageError}</p><a href="/properties" className="mt-4 inline-block text-sm text-indigo-200">Quay lại danh sách</a></main>;
     const center = property?.geometry ? L.geoJSON(property.geometry).getBounds().getCenter() : null;
-    return <main className="min-h-screen bg-canvas text-slate-100"><div className="mx-auto max-w-5xl px-5 pb-10 pt-6 sm:px-8 lg:px-12"><MainNavigation rightSlot={<span className="rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-amber-100/70">Dữ liệu demo</span>} /><a href="/properties" className="mt-7 inline-flex items-center gap-2 text-sm text-indigo-200 hover:text-white">← Quay lại danh sách hồ sơ</a>{property ? <><section className="mt-7 flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Chi tiết hồ sơ · {typeLabels[property.type] || property.type}</p><h1 className="mt-2 text-3xl font-medium text-white">{property.code}</h1><p className="mt-2 text-sm text-slate-400">{property.address || 'Chưa cập nhật địa chỉ'}</p></div><span className="rounded-full border border-slate-300/10 px-3 py-1.5 text-xs text-slate-400">Chưa đăng ký blockchain</span></section><div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[['Chủ hồ sơ', property.owner_name || 'Chưa cập nhật'], ['Loại hình', typeLabels[property.type] || property.type], ['Diện tích', `${areaNumber.format(property.area)} m²`], ['Giá tham khảo', formatPrice(property.price)], ['Tình trạng giấy tờ', property.document_status || 'Chưa cung cấp'], ['Tâm ranh giới ước tính', center ? `${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}` : 'Chưa có tọa độ']].map(([label, value]) => <article key={label} className="rounded-xl border border-white/[0.08] bg-panel p-5"><p className="text-xs text-slate-500">{label}</p><p className="mt-2 text-sm text-slate-200">{value}</p></article>)}</div><section className="mt-4 rounded-xl border border-white/[0.08] bg-panel p-5"><h2 className="text-sm font-medium text-white">Mô tả hồ sơ</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-400">{property.description || 'Chưa có mô tả.'}</p></section><div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/10 bg-amber-200/[0.035] p-4"><p className="max-w-2xl text-xs leading-5 text-slate-400">Thông tin này lấy từ dữ liệu mẫu trong trình duyệt. Trạng thái giấy tờ chỉ là nội dung demo; hệ thống chưa xác minh quyền sở hữu pháp lý hoặc blockchain.</p><div className="flex gap-2">{center && <a href={`/gis?property=${encodeURIComponent(property.code)}`} className="rounded-lg border border-white/[0.1] px-3 py-2.5 text-sm text-slate-200 hover:bg-white/[0.04]">Xem trên bản đồ</a>}{canManage && <><button type="button" onClick={() => { if (window.confirm(`Xóa hồ sơ ${property.code} khỏi dữ liệu demo?`)) { deleteProperty(property.code); window.location.href = '/properties'; } }} className="rounded-lg border border-rose-300/20 px-3 py-2.5 text-sm text-rose-200 hover:bg-rose-300/[0.06]">Xóa</button><button type="button" onClick={() => { setDialogProperty(property); setDialogMode('edit'); }} className="rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-indigo-200">Chỉnh sửa hồ sơ</button></>}</div></div></> : <section className="mt-8 rounded-2xl border border-white/[0.08] bg-panel p-8"><h1 className="text-xl font-medium text-white">Không tìm thấy hồ sơ</h1><p className="mt-2 text-sm text-slate-400">Mã hồ sơ này không có trong dữ liệu demo đang lưu trên trình duyệt.</p></section>}</div>{dialogMode === 'edit' && property && <PropertyModal key={`edit-${property.code}`} mode="edit" property={property} existingCodes={properties.map((item) => item.code)} canManage={canManage} onClose={closeDialog} onEdit={() => {}} onCreate={addProperty} onUpdate={updateProperty} onDelete={deleteProperty} />}</main>;
+    return <main className="min-h-screen bg-canvas text-slate-100"><div className="mx-auto max-w-5xl px-5 pb-10 pt-6 sm:px-8 lg:px-12"><MainNavigation rightSlot={<span className="rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-amber-100/70">Dữ liệu PostgreSQL</span>} /><a href="/properties" className="mt-7 inline-flex items-center gap-2 text-sm text-indigo-200 hover:text-white">← Quay lại danh sách hồ sơ</a>{property ? <><section className="mt-7 flex flex-wrap items-start justify-between gap-4"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Chi tiết hồ sơ · {typeLabels[property.type] || property.type}</p><h1 className="mt-2 text-3xl font-medium text-white">{property.code}</h1><p className="mt-2 text-sm text-slate-400">{property.address || 'Chưa cập nhật địa chỉ'}</p></div><span className="rounded-full border border-slate-300/10 px-3 py-1.5 text-xs text-slate-400">Chưa đăng ký blockchain</span></section><div className="mt-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{[['Chủ hồ sơ', property.owner_name || 'Chưa cập nhật'], ['Loại hình', typeLabels[property.type] || property.type], ['Diện tích', `${areaNumber.format(property.area)} m²`], ['Giá tham khảo', formatPrice(property.price)], ['Tình trạng giấy tờ', property.document_status || 'Chưa cung cấp'], ['Tâm ranh giới ước tính', center ? `${center.lat.toFixed(6)}, ${center.lng.toFixed(6)}` : 'Chưa có tọa độ']].map(([label, value]) => <article key={label} className="rounded-xl border border-white/[0.08] bg-panel p-5"><p className="text-xs text-slate-500">{label}</p><p className="mt-2 text-sm text-slate-200">{value}</p></article>)}</div><section className="mt-4 rounded-xl border border-white/[0.08] bg-panel p-5"><h2 className="text-sm font-medium text-white">Mô tả hồ sơ</h2><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-400">{property.description || 'Chưa có mô tả.'}</p></section><div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200/10 bg-amber-200/[0.035] p-4"><p className="max-w-2xl text-xs leading-5 text-slate-400">Thông tin được đọc từ PostgreSQL. Trạng thái giấy tờ không xác minh quyền sở hữu pháp lý hoặc blockchain.</p><div className="flex gap-2">{center && <a href={`/gis?property=${encodeURIComponent(property.code)}`} className="rounded-lg border border-white/[0.1] px-3 py-2.5 text-sm text-slate-200 hover:bg-white/[0.04]">Xem trên bản đồ</a>}{canManage && <><button type="button" onClick={async () => { if (window.confirm(`Xóa hồ sơ ${property.code} khỏi database?`)) { try { await deleteProperty(property.code); } catch (error) { window.alert(error.message || 'Không xóa được hồ sơ.'); } } }} className="rounded-lg border border-rose-300/20 px-3 py-2.5 text-sm text-rose-200 hover:bg-rose-300/[0.06]">Xóa</button><button type="button" onClick={() => { setDialogProperty(property); setDialogMode('edit'); }} className="rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-indigo-200">Chỉnh sửa hồ sơ</button></>}</div></div></> : <section className="mt-8 rounded-2xl border border-white/[0.08] bg-panel p-8"><h1 className="text-xl font-medium text-white">Không tìm thấy hồ sơ</h1><p className="mt-2 text-sm text-slate-400">Mã hồ sơ này không có trong database.</p></section>}</div>{dialogMode === 'edit' && property && <PropertyModal key={`edit-${property.code}`} mode="edit" property={property} existingCodes={properties.map((item) => item.code)} canManage={canManage} onClose={closeDialog} onEdit={() => {}} onCreate={addProperty} onUpdate={updateProperty} onDelete={deleteProperty} />}</main>;
   }
 
   return (
     <main className="min-h-screen bg-canvas text-slate-100">
       <div className="mx-auto max-w-7xl px-5 pb-10 pt-6 sm:px-8 lg:px-12">
-        <MainNavigation rightSlot={<span className="hidden rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-amber-100/70 sm:inline-flex"><span className="mr-2 h-1.5 w-1.5 rounded-full bg-amber-300" />Demo · lưu trên trình duyệt</span>} />
+        <MainNavigation rightSlot={<span className="hidden rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-amber-100/70 sm:inline-flex"><span className="mr-2 h-1.5 w-1.5 rounded-full bg-amber-300" />PostgreSQL · đồng bộ API</span>} />
 
         <section className="mt-9 flex flex-col justify-between gap-5 sm:flex-row sm:items-end">
           <div>
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Danh mục tài sản</p>
             <h1 className="mt-3 text-3xl font-medium tracking-tight text-white sm:text-4xl">Hồ sơ bất động sản</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">Tra cứu, thêm, sửa và xóa hồ sơ mẫu. Thay đổi được lưu trên trình duyệt này và chưa đồng bộ với backend.</p>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-slate-400">Tra cứu và quản lý hồ sơ được lưu trực tiếp trong PostgreSQL/PostGIS.</p>
           </div>
-          <div className="flex flex-wrap gap-2"><button type="button" onClick={restoreSampleData} className="rounded-lg border border-white/[0.1] px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20 hover:text-white">Khôi phục dữ liệu mẫu</button>{canManage && <button type="button" onClick={() => { setDialogProperty(null); setDialogMode('create'); }} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-indigo-200"><Icon name="plus" />Thêm hồ sơ</button>}</div>
+          <div className="flex flex-wrap gap-2"><button type="button" onClick={restoreSampleData} className="rounded-lg border border-white/[0.1] px-3 py-2.5 text-sm text-slate-300 transition hover:border-white/20 hover:text-white">Đồng bộ 100 hồ sơ mẫu</button>{canManage && <button type="button" onClick={() => { setDialogProperty(null); setDialogMode('create'); }} className="inline-flex items-center justify-center gap-2 rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-indigo-200"><Icon name="plus" />Thêm hồ sơ</button>}</div>
         </section>
 
-        {storageError && <p role="status" className="mt-4 rounded-lg border border-amber-200/15 bg-amber-200/[0.04] px-4 py-3 text-xs leading-5 text-amber-100/80">{storageError}</p>}
+        {(pageError || operationError) && <p role="status" className="mt-4 rounded-lg border border-amber-200/15 bg-amber-200/[0.04] px-4 py-3 text-xs leading-5 text-amber-100/80">{pageError || operationError}</p>}
 
         <section aria-label="Tổng quan hồ sơ" className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Tổng hồ sơ" value={money.format(properties.length)} hint="Đang hiển thị trong dữ liệu demo" icon="home" />
+          <Metric label="Tổng hồ sơ" value={money.format(properties.length)} hint="Đang lưu trong PostgreSQL" icon="home" />
           <Metric label="Loại hình" value={money.format(new Set(properties.map((item) => item.type)).size)} hint="Nhà ở, căn hộ, đất, thương mại" icon="area" />
           <Metric label="Tổng diện tích" value={`${areaNumber.format(properties.reduce((sum, item) => sum + (Number(item.area) || 0), 0))} m²`} hint="Theo diện tích hồ sơ hiện có" icon="area" />
-          <Metric label="Tổng giá tham khảo" value={`${(totalValue / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tỷ`} hint="Cộng từ dữ liệu demo hiện tại" icon="pin" />
+          <Metric label="Tổng giá tham khảo" value={`${(totalValue / 1_000_000_000).toLocaleString('vi-VN', { maximumFractionDigits: 1 })} tỷ`} hint="Cộng từ dữ liệu trong database" icon="pin" />
         </section>
 
         <section className="mt-8 overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70">
           <div className="border-b border-white/[0.07] p-4 sm:p-5">
-            <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-sm font-medium text-slate-100">Danh sách hồ sơ</h2><p className="mt-1 text-xs text-slate-500">{money.format(filtered.length)} kết quả · lưu local trên thiết bị này</p></div><div className="inline-flex rounded-lg border border-white/[0.1] bg-[#0b0e14] p-0.5" role="group" aria-label="Chế độ hiển thị">{[['table', 'Bảng'], ['cards', 'Thẻ']].map(([key, label]) => <button key={key} type="button" aria-pressed={viewMode === key} onClick={() => setViewMode(key)} className={`rounded-md px-3 py-1.5 text-xs ${viewMode === key ? 'bg-white/[0.12] text-white' : 'text-slate-500 hover:text-slate-300'}`}>{label}</button>)}</div></div>
+            <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-sm font-medium text-slate-100">Danh sách hồ sơ</h2><p className="mt-1 text-xs text-slate-500">{money.format(filtered.length)} kết quả · đọc từ PostgreSQL</p></div><div className="inline-flex rounded-lg border border-white/[0.1] bg-[#0b0e14] p-0.5" role="group" aria-label="Chế độ hiển thị">{[['table', 'Bảng'], ['cards', 'Thẻ']].map(([key, label]) => <button key={key} type="button" aria-pressed={viewMode === key} onClick={() => setViewMode(key)} className={`rounded-md px-3 py-1.5 text-xs ${viewMode === key ? 'bg-white/[0.12] text-white' : 'text-slate-500 hover:text-slate-300'}`}>{label}</button>)}</div></div>
             <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
               <label className="relative block"><span className="sr-only">Tìm kiếm hồ sơ</span><Icon name="search" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" /><input value={query} onChange={(event) => changeFilter(() => setQuery(event.target.value))} placeholder="Tìm mã, chủ hồ sơ, địa chỉ..." className="w-full rounded-lg border border-white/[0.09] bg-[#0b0e14] py-2.5 pl-9 pr-3 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-300/40" /></label>
               <details className="relative rounded-lg border border-white/[0.09] bg-[#0b0e14] text-sm text-slate-300"><summary className="cursor-pointer list-none px-3 py-2.5">Loại hình{types.length ? ` · ${types.length} chọn` : ' · Tất cả'}</summary><div className="grid gap-2 border-t border-white/[0.07] p-3">{Object.entries(typeLabels).map(([key, label]) => <label key={key} className="flex items-center gap-2 text-xs text-slate-400"><input type="checkbox" checked={types.includes(key)} onChange={() => toggleType(key)} className="accent-indigo-300" />{label}</label>)}</div></details>
@@ -349,7 +447,7 @@ export default function PropertyManagementPage({ detailCode = '' }) {
         </section>
       </div>
 
-      {dialogMode && <PropertyModal key={`${dialogMode}-${dialogProperty?.code ?? 'new'}`} mode={dialogMode} property={dialogProperty} existingCodes={properties.map((item) => item.code)} canManage={canManage} onClose={closeDialog} onEdit={() => setDialogMode('edit')} onCreate={addProperty} onUpdate={updateProperty} onDelete={deleteProperty} />}
+      {dialogMode && (dialogMode === 'create' || dialogProperty) && <PropertyModal key={`${dialogMode}-${dialogProperty?.code ?? 'new'}`} mode={dialogMode} property={dialogProperty} existingCodes={properties.map((item) => item.code)} canManage={canManage} onClose={closeDialog} onEdit={() => setDialogMode('edit')} onCreate={addProperty} onUpdate={updateProperty} onDelete={deleteProperty} />}
     </main>
   );
 }
