@@ -1,7 +1,9 @@
 node_modules/
 .env
+.env.local
 dist/
 uploads/
 contracts/artifacts/
 contracts/cache/
+/PROJECT_STATUS.md
 docker-compose.override.yml/
