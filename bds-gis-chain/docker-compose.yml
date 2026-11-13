@@ -6,7 +6,7 @@ services:
     container_name: bds_postgis
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: 1234
       POSTGRES_DB: bds_gis
     ports:
       - "5431:5432"

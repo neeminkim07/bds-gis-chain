@@ -4,3 +4,4 @@ dist/
 uploads/
 contracts/artifacts/
 contracts/cache/
+docker-compose.override.yml/
