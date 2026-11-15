@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import MainNavigation from '../components/MainNavigation.jsx';
+import PageGuide from '../components/PageGuide.jsx';
 import { fetchCurrentUser, getAuthToken, saveAuthSession } from '../lib/authSession.js';
 
 function initialLetters(username = '') {
@@ -52,10 +53,8 @@ export default function ProfilePage() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const fallback = response.status === 404
-          ? 'Backend hiện chưa có PATCH /api/auth/me. Giao diện đã sẵn sàng; Đạt cần bổ sung API cập nhật hồ sơ.'
-          : `Không lưu được hồ sơ (HTTP ${response.status}).`;
-        throw new Error(response.status === 404 ? fallback : (data?.message || data?.error?.message || fallback));
+        const fallback = `Không lưu được hồ sơ (HTTP ${response.status}).`;
+        throw new Error(data?.message || data?.error?.message || fallback);
       }
       const nextUser = data?.data?.user || data?.user || { ...profile, username: form.username.trim(), email: form.email.trim() };
       setProfile(nextUser);
@@ -79,6 +78,8 @@ export default function ProfilePage() {
         <h1 className="mt-2 text-3xl font-medium tracking-tight text-white">Thông tin cá nhân</h1>
         <p className="mt-2 text-sm text-slate-400">Xem và chỉnh sửa thông tin gắn với tài khoản GIS-CHAIN.</p>
       </section>
+
+      <PageGuide steps={['Kiểm tra tên đăng nhập, email và quyền truy cập.', 'Chọn Chỉnh sửa hồ sơ để cập nhật tên hoặc email.', 'Lưu thay đổi và xem thông báo kết quả ngay trên trang.']} note="Bạn không thể tự đổi quyền truy cập; quản trị viên phụ trách việc này." />
 
       {loading ? <div className="mt-8 rounded-2xl border border-white/[0.08] bg-panel/70 p-8 text-sm text-slate-400">Đang tải thông tin tài khoản…</div>
         : !profile ? <section className="mt-8 rounded-2xl border border-white/[0.08] bg-panel/70 p-8">
@@ -109,12 +110,10 @@ export default function ProfilePage() {
                 {message && <p role={message.ok ? 'status' : 'alert'} className={`mt-4 rounded-lg border px-3 py-2.5 text-xs leading-5 ${message.ok ? 'border-emerald-200/15 bg-emerald-200/[0.04] text-emerald-100/80' : 'border-amber-200/15 bg-amber-200/[0.04] text-amber-100/80'}`}>{message.text}</p>}
               </div>
 
-              <aside className="rounded-xl border border-white/[0.07] bg-white/[0.02] p-5">
-                <div className="flex items-center justify-between"><h3 className="text-sm font-medium text-white">Thông báo</h3><span className="rounded-full border border-amber-200/15 px-2 py-0.5 text-[10px] text-amber-100/70">Demo</span></div>
-                <div className="mt-4 space-y-4">
-                  <article className="border-b border-white/[0.06] pb-4"><p className="text-xs font-medium text-slate-200">Tài khoản đã đăng nhập</p><p className="mt-1 text-xs leading-5 text-slate-400">Phiên đăng nhập được xác nhận qua API `/api/auth/me`.</p></article>
-                  <article><p className="text-xs font-medium text-slate-200">Khu vực thông báo</p><p className="mt-1 text-xs leading-5 text-slate-400">Thông báo hiện là dữ liệu minh họa; backend chưa có API thông báo.</p></article>
-                </div>
+              <aside className="rounded-xl border border-slate-200 bg-slate-50 p-5">
+                <div className="flex items-center justify-between"><h3 className="text-sm font-semibold text-slate-900">Thông báo tài khoản</h3><span className="rounded-full bg-white px-2.5 py-1 text-[10px] font-medium text-slate-500">Chưa bật</span></div>
+                <p className="mt-3 text-xs leading-5 text-slate-600">Backend chưa có API thông báo. Khi dịch vụ được tích hợp, các cập nhật tài khoản sẽ xuất hiện tại đây.</p>
+                <a href="/notifications" className="mt-4 inline-flex text-xs font-semibold text-indigo-700 hover:text-indigo-900">Mở trung tâm thông báo →</a>
               </aside>
             </div>
           </section>}

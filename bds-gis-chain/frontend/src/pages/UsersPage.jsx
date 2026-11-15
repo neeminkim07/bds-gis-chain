@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import MainNavigation from '../components/MainNavigation.jsx';
+import PageGuide from '../components/PageGuide.jsx';
 import { getAuthToken, getCachedUser } from '../lib/authSession.js';
 
 const PAGE_SIZE = 50;
@@ -141,6 +142,7 @@ export default function UsersPage() {
   return <main className="min-h-screen bg-canvas text-slate-100"><div className="mx-auto max-w-7xl px-4 pb-10 sm:px-7 lg:px-10">
     <MainNavigation />
     <section className="mt-9 flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Quản trị hệ thống</p><h1 className="mt-2 text-3xl font-medium tracking-tight text-white">Người dùng</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">Quản lý tài khoản trong PostgreSQL. Tài khoản đăng ký mới sẽ xuất hiện trong danh sách.</p></div><div className="flex gap-2"><button type="button" onClick={() => setReloadKey((key) => key + 1)} disabled={loading || working} className="rounded-lg border border-white/[0.1] px-4 py-2.5 text-sm text-slate-200 hover:border-indigo-200/30 disabled:opacity-50">Làm mới</button><button type="button" onClick={openCreate} className="rounded-lg bg-indigo-300 px-4 py-2.5 text-sm font-medium text-slate-950 hover:bg-indigo-200">Thêm người dùng</button></div></section>
+    <PageGuide steps={['Tìm tài khoản theo username hoặc email.', 'Tạo người dùng mới hoặc đổi vai trò khi có yêu cầu được duyệt.', 'Dùng Khóa/Mở khóa để kiểm soát truy cập; thao tác này không xóa hồ sơ người dùng.']} note="Trang chỉ dành cho Admin. Cẩn trọng khi cấp quyền Admin và luôn giữ ít nhất một Admin hoạt động." />
     <div className="mt-6 rounded-xl border border-indigo-200/10 bg-indigo-200/[0.035] px-4 py-3 text-xs leading-5 text-indigo-100/75">Có thể tạo, sửa vai trò, gán ví, khóa/mở khóa hoặc xóa tài khoản. Tài khoản bị khóa mất quyền truy cập ngay; Admin cuối cùng không thể tự khóa, tự hạ quyền hoặc bị xóa.</div>
     {error && <div role="alert" className="mt-3 rounded-lg border border-rose-200/15 bg-rose-200/[0.04] px-4 py-3 text-xs text-rose-100/80">{error}</div>}
     {toast && <div role="status" className="mt-3 flex items-center justify-between rounded-lg border border-emerald-200/15 bg-emerald-200/[0.04] px-4 py-3 text-xs text-emerald-100/80">{toast}<button type="button" onClick={() => setToast('')} className="ml-3 text-slate-400 hover:text-white">Đóng</button></div>}
