@@ -10,6 +10,7 @@ import VerifyPage from './pages/VerifyPage.jsx';
 import NotificationsPage from './pages/NotificationsPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
 import UsersPage from './pages/UsersPage.jsx';
+import { getCachedUser } from './lib/authSession.js';
 
 const destinations = [
   {
@@ -30,16 +31,24 @@ const destinations = [
   },
   {
     number: '03',
-    title: 'Xác thực Blockchain',
-    description: 'Kiểm tra hash và lịch sử xác thực của một hồ sơ bất động sản.',
+    title: 'Kiểm tra tính toàn vẹn',
+    description: 'Xem dấu vân tay dữ liệu của hồ sơ. Đối chiếu blockchain sẽ khả dụng sau khi được kết nối.',
     href: '/verify',
-    label: 'Toàn vẹn dữ liệu',
+    label: 'Đang hoàn thiện',
     icon: 'chain',
   },
   {
     number: '04',
-    title: 'API Docs',
-    description: 'Tài liệu endpoint dành cho frontend và các dịch vụ tích hợp.',
+    title: 'Quản trị tài khoản',
+    description: 'Quản lý tài khoản, vai trò và trạng thái truy cập.',
+    href: '/users',
+    label: 'Chỉ dành cho Admin',
+    icon: 'users',
+  },
+  {
+    number: '05',
+    title: 'Tài liệu tích hợp',
+    description: 'Hướng dẫn kỹ thuật dành cho nhóm phát triển và tích hợp hệ thống.',
     href: '/api-docs',
     label: 'Tích hợp',
     icon: 'code',
@@ -52,6 +61,7 @@ function FeatureIcon({ name }) {
     building: <><path d="M3 21h18M5 21V7l7-4 7 4v14M9 9h.01M15 9h.01M9 13h.01M15 13h.01M10 21v-4h4v4" /></>,
     chain: <><path d="M10 13a5 5 0 0 0 7.07 0l3-3A5 5 0 0 0 13 2.93l-1.72 1.72" /><path d="M14 11a5 5 0 0 0-7.07 0l-3 3A5 5 0 0 0 11 21.07l1.72-1.72" /></>,
     code: <><path d="m8 17-5-5 5-5M16 7l5 5-5 5M14 4l-4 16" /></>,
+    users: <><path d="M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" /><circle cx="10" cy="7" r="4" /><path d="M20 8v6M23 11h-6" /></>,
   };
 
   return (
@@ -62,58 +72,56 @@ function FeatureIcon({ name }) {
 }
 
 function LandingPage() {
+  const user = getCachedUser();
+  const visibleDestinations = destinations.filter((item) => item.href !== '/users' || user?.role === 'Admin');
   return (
-    <main className="relative min-h-screen overflow-hidden bg-canvas text-slate-100">
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_50%_-15%,rgba(110,128,255,0.15),transparent_55%)]" />
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col px-5 pb-8 pt-6 sm:px-8 lg:px-12">
-        <MainNavigation rightSlot={<span className="hidden rounded-full border border-white/[0.08] bg-white/[0.03] px-3 py-1.5 text-xs text-slate-400 sm:inline-flex"><span className="mr-2 h-1.5 w-1.5 rounded-full bg-indigo-300" />Môi trường demo</span>} />
+    <main className="relative min-h-screen overflow-hidden bg-canvas text-slate-900">
+      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-[520px] bg-[radial-gradient(ellipse_at_50%_-15%,rgba(88,130,89,0.15),transparent_64%)]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 pb-8 pt-4 sm:px-7 lg:px-10">
+        <MainNavigation mode="landing" rightSlot={<span className="hidden items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-600 sm:inline-flex"><span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />Hệ thống quản lý hồ sơ</span>} />
 
-        <section className="mx-auto flex w-full max-w-4xl flex-1 flex-col justify-center py-16 sm:py-20">
-          <div className="mb-5 flex items-center gap-3 text-xs font-medium uppercase tracking-[0.2em] text-indigo-200/80">
-            <span className="h-px w-8 bg-indigo-300/50" />
-            Không gian làm việc
+        <section className="grid flex-1 items-center gap-12 py-12 lg:grid-cols-[1fr_0.85fr] lg:py-16">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-white/80 px-3 py-1.5 text-xs font-semibold text-indigo-700 shadow-sm"><span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />Không gian quản lý bất động sản</div>
+            <h1 className="mt-7 text-4xl font-semibold leading-[1.08] tracking-[-0.045em] text-slate-950 sm:text-5xl lg:text-6xl">Dữ liệu tài sản,<span className="mt-2 block text-indigo-600">trên một bản đồ rõ ràng.</span></h1>
+            <p className="mt-6 max-w-xl text-base leading-7 text-slate-600">Tra cứu hồ sơ, xem ranh giới trên bản đồ và quản lý thông tin tập trung trong một không gian làm việc rõ ràng.</p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href={user ? '/dashboard' : '/login'} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-3 text-sm font-semibold !text-white shadow-lg shadow-indigo-600/20 transition hover:bg-indigo-700">{user ? 'Mở tổng quan' : 'Đăng nhập'}<span aria-hidden="true">→</span></a>
+              <a href="/gis" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-indigo-200 hover:text-indigo-700">Khám phá bản đồ</a>
+            </div>
+            <div className="mt-10 grid max-w-lg grid-cols-3 gap-3 border-t border-slate-200 pt-5">{[['Hồ sơ tập trung', 'Tra cứu thuận tiện'], ['Bản đồ trực quan', 'Xem theo vị trí'], ['Phân quyền rõ ràng', 'Theo vai trò tài khoản']].map(([title, caption]) => <div key={title}><p className="text-sm font-semibold text-slate-800">{title}</p><p className="mt-1 text-[11px] text-slate-500">{caption}</p></div>)}</div>
           </div>
-          <h1 className="max-w-3xl text-4xl font-medium leading-[1.12] tracking-[-0.045em] text-white sm:text-5xl lg:text-6xl">
-            Quản lý bất động sản
-            <span className="mt-2 block text-slate-400">trên một nền tảng thống nhất.</span>
-          </h1>
-          <p className="mt-6 max-w-2xl text-sm leading-7 text-slate-400 sm:text-base">
-            Truy cập bản đồ không gian, hồ sơ tài sản và công cụ xác thực dữ liệu từ một nơi.
-            Giao diện hiện dùng dữ liệu mẫu trong giai đoạn phát triển.
-          </p>
 
-          <div className="mt-12 grid gap-3 sm:grid-cols-2">
-            {destinations.map((item) => (
+          <div>
+            <div className="mb-4 flex items-end justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">Bắt đầu tại đây</p><h2 className="mt-1 text-xl font-semibold text-slate-900">Chọn một chức năng</h2></div><span className="text-xs text-slate-500">{visibleDestinations.length} mục</span></div>
+            <div className="grid gap-3 sm:grid-cols-2">
+            {visibleDestinations.map((item) => (
               <a
                 key={item.href}
                 href={item.href}
-                className="group rounded-2xl border border-line bg-panel/80 p-5 transition duration-200 hover:-translate-y-0.5 hover:border-indigo-300/40 hover:bg-[#151925] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300/70 sm:p-6"
+                className="group rounded-2xl border border-slate-200 bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-900/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300/70"
               >
                 <div className="flex items-start justify-between gap-4">
-                  <span className="grid h-10 w-10 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-indigo-200 transition group-hover:border-indigo-300/20 group-hover:bg-indigo-300/10">
+                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-indigo-50 text-indigo-700 transition group-hover:bg-indigo-100">
                     <FeatureIcon name={item.icon} />
                   </span>
-                  <span className="font-mono text-xs text-slate-600">{item.number}</span>
+                  <span className="font-mono text-[11px] font-semibold text-slate-400">{item.number}</span>
                 </div>
-                <div className="mt-6 flex items-center justify-between gap-3">
-                  <h2 className="text-base font-medium text-slate-100">{item.title}</h2>
-                  <span aria-hidden="true" className="text-slate-600 transition group-hover:translate-x-1 group-hover:text-indigo-200">↗</span>
+                <div className="mt-5 flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold text-slate-900">{item.title}</h3>
+                  <span aria-hidden="true" className="text-slate-400 transition group-hover:translate-x-1 group-hover:text-indigo-600">↗</span>
                 </div>
-                <p className="mt-2 min-h-12 text-sm leading-6 text-slate-400">{item.description}</p>
-                <span className="mt-5 inline-flex rounded-full border border-white/[0.08] px-2.5 py-1 text-[11px] text-slate-500">{item.label}</span>
+                <p className="mt-2 min-h-10 text-xs leading-5 text-slate-500">{item.description}</p>
+                <span className="mt-4 inline-flex rounded-full bg-slate-50 px-2.5 py-1 text-[10px] font-medium text-slate-600">{item.label}</span>
               </a>
             ))}
-          </div>
-
-          <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate-500">
-            <span className="inline-flex items-center gap-2"><span className="h-1.5 w-1.5 rounded-full bg-amber-300/80" />Các module đang được phát triển</span>
-            <span>React · Tailwind CSS · PostGIS · Blockchain</span>
+            </div>
           </div>
         </section>
 
-        <footer className="flex flex-col gap-2 border-t border-white/[0.08] pt-5 text-xs text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+        <footer className="flex flex-col gap-2 border-t border-slate-200 pt-5 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between">
           <span>GIS-CHAIN · Hệ thống quản lý và xác thực hồ sơ BĐS</span>
-          <span>Development workspace</span>
+          <span>GIS · Hồ sơ · Không gian địa lý</span>
         </footer>
       </div>
     </main>

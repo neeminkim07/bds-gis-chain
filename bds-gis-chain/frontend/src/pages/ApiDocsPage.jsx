@@ -1,5 +1,6 @@
 import React from 'react';
 import MainNavigation from '../components/MainNavigation.jsx';
+import PageGuide from '../components/PageGuide.jsx';
 
 const endpoints = [
   {
@@ -118,6 +119,84 @@ const endpoints = [
     response: `{ "ok": true, "data": { "id": 12, "deleted": true } }`,
     errors: '403 chỉ Admin · 404 không tìm thấy · 409 không thể xóa chính mình hoặc Admin cuối cùng',
   },
+  {
+    method: 'GET', path: '/api/properties?page=1&limit=100', title: 'Danh sách hồ sơ và ranh giới', auth: true,
+    description: 'Tìm kiếm/lọc hồ sơ có phân trang. GET chỉ cần User hoặc Admin; các tham số q, type, area_min/max, price_min/max là tùy chọn.',
+    response: `{
+  "ok": true,
+  "data": [{
+    "id": 1, "code": "BDS001", "address": "…", "area": "120.00",
+    "type": "house", "location": { "type": "Point", "coordinates": [105.8, 21.0] },
+    "boundary": { "type": "MultiPolygon", "coordinates": [] }
+  }],
+  "pagination": { "page": 1, "limit": 100, "total": 1, "pages": 1 }
+}`,
+    errors: '401 token không hợp lệ · 400 bộ lọc không hợp lệ',
+  },
+  {
+    method: 'GET', path: '/api/properties/:id', title: 'Chi tiết hồ sơ theo ID database', auth: true,
+    description: 'ID là số nguyên của PostgreSQL; mã hồ sơ dùng trên giao diện không phải ID endpoint này.',
+    response: `{ "ok": true, "data": { "id": 12, "code": "BDS-DEMO-01", "boundary": { "type": "MultiPolygon" } } }`,
+    errors: '401 token không hợp lệ · 404 không tìm thấy · 400 ID không hợp lệ',
+  },
+  {
+    method: 'POST', path: '/api/properties', title: 'Tạo hồ sơ (Admin)', auth: true,
+    description: 'Tạo hồ sơ cùng polygon/multipolygon GeoJSON EPSG:4326. Backend chuẩn hóa boundary thành MultiPolygon và tính location.',
+    request: `{
+  "code": "BDS-DEMO-01",
+  "address": "Địa chỉ hồ sơ",
+  "type": "house",
+  "boundary": { "type": "Polygon", "coordinates": [[[105.8, 21.0], [105.81, 21.0], [105.81, 21.01], [105.8, 21.0]]] }
+}`,
+    response: `{ "ok": true, "data": { "id": 12, "code": "BDS-DEMO-01", "boundary": { "type": "MultiPolygon" } } }`,
+    errors: '400 dữ liệu/geometry sai · 403 cần Admin · 409 mã hồ sơ đã tồn tại',
+  },
+  {
+    method: 'PUT', path: '/api/properties/:id', title: 'Cập nhật hồ sơ (Admin)', auth: true,
+    description: 'Cập nhật hồ sơ theo ID số trong database. Body dùng cùng các trường tạo hồ sơ.',
+    request: `{ "code": "BDS-DEMO-01", "address": "Địa chỉ mới", "type": "house", "area": 120, "boundary": { "type": "Polygon", "coordinates": [] } }`,
+    response: `{ "ok": true, "data": { "id": 12, "code": "BDS-DEMO-01" } }`,
+    errors: '400 dữ liệu/geometry sai · 403 cần Admin · 404 không tìm thấy · 409 mã trùng',
+  },
+  {
+    method: 'DELETE', path: '/api/properties/:id', title: 'Xóa hồ sơ (Admin)', auth: true,
+    description: 'Xóa hồ sơ theo ID database.',
+    response: `{ "ok": true, "data": { "id": 12, "deleted": true } }`,
+    errors: '403 cần Admin · 404 không tìm thấy · 400 ID không hợp lệ',
+  },
+  {
+    method: 'POST', path: '/api/properties/bulk', title: 'Nhập/cập nhật tối đa 500 hồ sơ (Admin)', auth: true,
+    description: 'Kiểm tra toàn bộ mảng trước, sau đó upsert trong một transaction; mã không có trong request được giữ nguyên.',
+    request: `{ "properties": [{ "code": "BDS001", "address": "…", "type": "house", "boundary": { "type": "Polygon", "coordinates": [] } }] }`,
+    response: `{ "ok": true, "data": { "upserted": 1 } }`,
+    errors: '400 mảng/geometry sai · 403 cần Admin · 409 xung đột',
+  },
+  {
+    method: 'GET', path: '/api/gis/radius?lon=105.8&lat=21&radius_m=2000', title: 'Tìm hồ sơ theo bán kính', auth: true,
+    description: 'PostGIS tìm theo location và trả khoảng cách chính xác bằng mét. Trang GIS hiện dùng endpoint này cho vùng lân cận.',
+    response: `{ "ok": true, "data": [{ "code": "BDS001", "distance_m": "125.50", "location": { "type": "Point", "coordinates": [105.8, 21.0] } }], "units": { "distance": "m" } }`,
+    errors: '400 lon/lat/radius_m ngoài miền cho phép · 401 token không hợp lệ',
+  },
+  {
+    method: 'POST', path: '/api/gis/intersects', title: 'Tìm polygon giao vùng', auth: true,
+    description: 'Tìm boundary giao với vùng GeoJSON gửi lên.',
+    request: `{ "geometry": { "type": "Polygon", "coordinates": [[[105.8, 21.0], [105.81, 21.0], [105.81, 21.01], [105.8, 21.0]]] } }`,
+    response: `{ "ok": true, "data": [{ "id": 1, "code": "BDS001", "boundary": { "type": "MultiPolygon" } }] }`,
+    errors: '400 geometry sai · 401 token không hợp lệ',
+  },
+  {
+    method: 'POST', path: '/api/gis/area', title: 'Tính diện tích geometry', auth: true,
+    description: 'Tính diện tích polygon bằng PostGIS geography, đơn vị m².',
+    request: `{ "geometry": { "type": "Polygon", "coordinates": [[[105.8, 21.0], [105.81, 21.0], [105.81, 21.01], [105.8, 21.0]]] } }`,
+    response: `{ "ok": true, "data": { "area_m2": "12345.67" }, "units": { "area": "m2" } }`,
+    errors: '400 geometry sai · 401 token không hợp lệ',
+  },
+  {
+    method: 'GET', path: '/api/gis/statistics', title: 'Thống kê hồ sơ', auth: true,
+    description: 'Tổng số hồ sơ, diện tích, giá trung bình và phân bố theo loại hình.',
+    response: `{ "ok": true, "data": { "summary": { "total": 100 }, "by_type": [], "units": { "area": "m2", "price": "VND" } } }`,
+    errors: '401 token không hợp lệ',
+  },
 ];
 
 function EndpointCard({ endpoint }) {
@@ -163,6 +242,8 @@ export default function ApiDocsPage() {
           <h1 className="mt-2 text-3xl font-medium tracking-tight text-white">API hiện có</h1>
           <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">Các endpoint dưới đây được đối chiếu với backend hiện tại. Trong môi trường phát triển, frontend gọi cùng origin và Vite chuyển tiếp `/api` tới `http://localhost:4000`.</p>
         </section>
+
+        <PageGuide steps={['Tìm endpoint theo nhóm chức năng và phương thức HTTP.', 'Kiểm tra nhãn cần đăng nhập/Admin trước khi gửi request.', 'Dùng request/response mẫu để tích hợp client; không chia sẻ JWT hoặc mật khẩu.']} note="Tài liệu bám theo routes backend trong repo. Vite dev server proxy /api tới backend cổng 4000." />
 
         <div className="mb-6 rounded-xl border border-indigo-200/15 bg-indigo-200/[0.04] p-4 text-sm leading-6 text-indigo-100/80">
           <strong className="font-medium text-indigo-100">Trạng thái:</strong> Các endpoint hiển thị ở đây đã được nối trong backend. API quản lý tài khoản chỉ dành cho Admin; tạo/sửa/khóa/xóa được lưu trực tiếp vào PostgreSQL.
