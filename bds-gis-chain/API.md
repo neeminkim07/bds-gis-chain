@@ -48,8 +48,17 @@ List filters: `q` searches code and address; `type`, `area_min`, `area_max`, `pr
 
 Radius and area values use meters and square meters. Spatial calculations use PostGIS geography for distance and area.
 
+## Blockchain & Verification
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/verify/status` | Check Hardhat blockchain node connection and contract readiness |
+| GET | `/verify/properties?q=...` | List properties with verification status and latest on-chain transaction |
+| GET | `/verify/:code` | Compare current SHA-256 database hash with on-chain Smart Contract hash, return tamper status and version history |
+| POST | `/verify/register/:id` | Register a new property version hash onto the Smart Contract (Admin only) |
+
 ## Import
 
 From `backend/`, run `npm run import -- [path/to/file.geojson]`. The importer validates the complete FeatureCollection before writing, accepts Polygon and MultiPolygon, and wraps all upserts in one transaction. Invalid input or a database error rolls back the whole import. The repeatable schema in `db/01_schema.sql` preserves existing rows and migrates existing Polygon boundaries to MultiPolygon in place.
 
-The property management page now reads and writes property records through this API. GIS, notifications, and verification still contain demo interactions; they are not presented as persisted backend features yet.
+The property management and verification pages now interact directly with PostgreSQL and the Ethereum Smart Contract via Ethers.js.

@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireRole } = require('../auth');
+const { recordPropertyVersion } = require('../blockchain');
 
 const router = express.Router();
 const TYPES = ['house', 'apartment', 'land', 'commercial'];
@@ -138,7 +139,14 @@ router.post('/', requireRole('Admin'), asyncRoute(async (req, res) => {
   const property = readProperty(req.body);
   const { rows } = await pool.query(UPSERT, [property.code, property.owner_name, property.address, property.area, property.type, property.price, property.boundary ? JSON.stringify(property.boundary) : null,property.description,property.document_status]);
   if (!rows[0]) return res.status(400).json({ ok: false, error: { code: 'INVALID_GEOMETRY', message: 'Ranh giới rỗng hoặc không tạo được polygon hợp lệ' } });
-  res.status(201).json({ ok: true, data: rows[0] });
+  const saved = rows[0];
+  try {
+    const versionInfo = await recordPropertyVersion(saved, { requireBlockchain: false });
+    saved.blockchain = versionInfo;
+  } catch (err) {
+    console.warn('Không thể tự động ghi phiên bản lên blockchain:', err.message);
+  }
+  res.status(201).json({ ok: true, data: saved });
 }));
 
 router.put('/:id', requireRole('Admin'), asyncRoute(async (req, res) => {
@@ -149,7 +157,14 @@ router.put('/:id', requireRole('Admin'), asyncRoute(async (req, res) => {
     location=CASE WHEN $8::jsonb IS NULL THEN location ELSE ST_PointOnSurface(ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON($8::text),4326)),3)))::geometry(Point,4326) END,
     updated_at=now() WHERE id=$1 RETURNING ${FIELDS}`, [id,property.code,property.owner_name,property.address,property.area,property.type,property.price,property.boundary ? JSON.stringify(property.boundary) : null,property.description,property.document_status]);
   if (!rows[0]) return res.status(404).json({ ok: false, error: { code: 'NOT_FOUND', message: 'Không tìm thấy hồ sơ' } });
-  res.json({ ok: true, data: rows[0] });
+  const saved = rows[0];
+  try {
+    const versionInfo = await recordPropertyVersion(saved, { requireBlockchain: false });
+    saved.blockchain = versionInfo;
+  } catch (err) {
+    console.warn('Không thể tự động ghi phiên bản lên blockchain:', err.message);
+  }
+  res.json({ ok: true, data: saved });
 }));
 
 router.delete('/:id', requireRole('Admin'), asyncRoute(async (req, res) => {
