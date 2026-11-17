@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import MainNavigation from '../components/MainNavigation.jsx';
-import { DEMO_PROPERTIES_CHANGED, initialDemoProperties, loadDemoProperties } from '../lib/demoProperties.js';
+import PageGuide from '../components/PageGuide.jsx';
+import { getAuthToken } from '../lib/authSession.js';
 
-const initialGeoJson = { type: 'FeatureCollection', features: initialDemoProperties.filter((property) => property.geometry).map(({ geometry, ...properties }) => ({ type: 'Feature', geometry, properties })) };
 const typeLabels = { house: 'Nhà ở', apartment: 'Căn hộ', land: 'Đất nền', commercial: 'Thương mại' };
 const typeColors = { house: '#f43f5e', apartment: '#0ea5e9', land: '#22c55e', commercial: '#f59e0b' };
 const areaFormat = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
@@ -48,15 +48,22 @@ function featureCenter(feature) {
   return layer.getBounds().getCenter();
 }
 
-function distanceInKm(first, second) {
-  const radians = (degrees) => degrees * Math.PI / 180;
-  const [lat1, lon1] = first;
-  const [lat2, lon2] = second;
-  const deltaLat = radians(lat2 - lat1);
-  const deltaLon = radians(lon2 - lon1);
-  const a = Math.sin(deltaLat / 2) ** 2
-    + Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(deltaLon / 2) ** 2;
-  return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+async function gisApi(path, signal, options = {}) {
+  const token = getAuthToken();
+  if (!token) throw new Error('Vui lòng đăng nhập để xem bản đồ và dữ liệu hồ sơ.');
+  const response = await fetch(path, {
+    ...options,
+    signal,
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...options.headers,
+    },
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(body?.error?.message || body?.message || `API trả về HTTP ${response.status}.`);
+  return body;
 }
 
 function FeatureBadge({ type }) {
@@ -79,15 +86,54 @@ function ArcGISMapPage() {
   const [selectedCode, setSelectedCode] = useState(() => new URLSearchParams(window.location.search).get('property') || '');
   const [radiusKm, setRadiusKm] = useState(2);
   const [analysisMode, setAnalysisMode] = useState(false);
+  const [intersectsMode, setIntersectsMode] = useState(false);
   const [analysisCenter, setAnalysisCenter] = useState(null);
   const analysisModeRef = useRef(analysisMode);
-  const [properties, setProperties] = useState(loadDemoProperties);
+  const intersectsModeRef = useRef(intersectsMode);
+  const [intersectsPoints, setIntersectsPoints] = useState([]);
+  const [intersectsPolygon, setIntersectsPolygon] = useState(null);
+  const [intersectsMatches, setIntersectsMatches] = useState(null);
+  const [intersectsLoading, setIntersectsLoading] = useState(false);
+  const [intersectsError, setIntersectsError] = useState('');
+  const [properties, setProperties] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [apiError, setApiError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+  const [radiusMatches, setRadiusMatches] = useState(null);
+  const [radiusDistances, setRadiusDistances] = useState(new Map());
+  const [radiusLoading, setRadiusLoading] = useState(false);
+  const [radiusError, setRadiusError] = useState('');
 
   useEffect(() => {
-    const sync = (event) => setProperties(Array.isArray(event.detail) ? event.detail : loadDemoProperties());
-    window.addEventListener(DEMO_PROPERTIES_CHANGED, sync);
-    return () => window.removeEventListener(DEMO_PROPERTIES_CHANGED, sync);
-  }, []);
+    const controller = new AbortController();
+    setLoading(true);
+    setApiError('');
+    (async () => {
+      try {
+        const all = [];
+        let page = 1;
+        let pages = 1;
+        do {
+          const params = new URLSearchParams({ page: String(page), limit: '100' });
+          const body = await gisApi(`/api/properties?${params}`, controller.signal);
+          all.push(...(Array.isArray(body.data) ? body.data : []));
+          pages = Number(body.pagination?.pages) || 1;
+          page += 1;
+        } while (page <= pages && !controller.signal.aborted);
+        if (!controller.signal.aborted) setProperties(all.map((property) => ({
+          ...property,
+          area: Number(property.area) || 0,
+          price: Number(property.price) || 0,
+          geometry: property.boundary || property.location || null,
+        })));
+      } catch (error) {
+        if (!controller.signal.aborted) setApiError(error.message || 'Không tải được hồ sơ GIS.');
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [reloadKey]);
 
   const features = useMemo(() => properties
     .filter((property) => property.geometry)
@@ -97,12 +143,75 @@ function ArcGISMapPage() {
     const p = feature.properties;
     const matchesType = type === 'all' || p.type === type;
     const searchable = `${p.code} ${p.address} ${p.owner_name}`.toLocaleLowerCase('vi');
-    const matchesRadius = !analysisCenter || distanceInKm(
-      [analysisCenter.lat, analysisCenter.lng],
-      [featureCenter(feature).lat, featureCenter(feature).lng],
-    ) <= radiusKm;
-    return matchesType && matchesRadius && searchable.includes(query.trim().toLocaleLowerCase('vi'));
-  }), [features, type, query, analysisCenter, radiusKm]);
+    const matchesSpatial = analysisCenter
+      ? radiusMatches === null || radiusMatches.has(p.code)
+      : intersectsPolygon ? intersectsMatches === null || intersectsMatches.has(p.code) : true;
+    return matchesType && matchesSpatial && searchable.includes(query.trim().toLocaleLowerCase('vi'));
+  }), [features, type, query, analysisCenter, radiusMatches, intersectsPolygon, intersectsMatches]);
+
+  useEffect(() => {
+    if (!analysisCenter) {
+      setRadiusMatches(null);
+      setRadiusDistances(new Map());
+      setRadiusError('');
+      setRadiusLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    const params = new URLSearchParams({
+      lon: String(analysisCenter.lng),
+      lat: String(analysisCenter.lat),
+      radius_m: String(radiusKm * 1000),
+    });
+    setRadiusLoading(true);
+    setRadiusError('');
+    setRadiusMatches(new Set());
+    setRadiusDistances(new Map());
+    gisApi(`/api/gis/radius?${params}`, controller.signal)
+      .then((body) => {
+        if (controller.signal.aborted) return;
+        const rows = Array.isArray(body.data) ? body.data : [];
+        setRadiusMatches(new Set(rows.map((row) => row.code)));
+        setRadiusDistances(new Map(rows.map((row) => [row.code, Number(row.distance_m)])));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setRadiusMatches(new Set());
+        setRadiusDistances(new Map());
+        setRadiusError(error.message || 'Không truy vấn được vùng lân cận.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setRadiusLoading(false); });
+    return () => controller.abort();
+  }, [analysisCenter, radiusKm]);
+
+  useEffect(() => {
+    if (!intersectsPolygon) {
+      setIntersectsMatches(null);
+      setIntersectsError('');
+      setIntersectsLoading(false);
+      return undefined;
+    }
+    const controller = new AbortController();
+    setIntersectsLoading(true);
+    setIntersectsError('');
+    setIntersectsMatches(new Set());
+    gisApi('/api/gis/intersects', controller.signal, {
+      method: 'POST',
+      body: JSON.stringify({ geometry: intersectsPolygon }),
+    })
+      .then((body) => {
+        if (controller.signal.aborted) return;
+        const rows = Array.isArray(body.data) ? body.data : [];
+        setIntersectsMatches(new Set(rows.map((row) => row.code)));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setIntersectsMatches(new Set());
+        setIntersectsError(error.message || 'Không truy vấn được vùng giao cắt.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setIntersectsLoading(false); });
+    return () => controller.abort();
+  }, [intersectsPolygon]);
 
   useEffect(() => {
     if (!mapNode.current || mapRef.current) return undefined;
@@ -129,10 +238,13 @@ function ArcGISMapPage() {
     analysisGroup.current = L.featureGroup().addTo(map);
     map.on('click', (event) => {
       if (analysisModeRef.current) setAnalysisCenter(event.latlng);
+      if (intersectsModeRef.current) {
+        setIntersectsPoints((points) => [...points, [event.latlng.lat, event.latlng.lng]]);
+        setIntersectsPolygon(null);
+      }
     });
 
-    const bounds = L.geoJSON(initialGeoJson).getBounds();
-    if (bounds.isValid()) map.fitBounds(bounds.pad(0.12), { maxZoom: 17 });
+    map.setView([21.0285, 105.8542], 6);
 
     return () => {
       map.remove();
@@ -143,6 +255,7 @@ function ArcGISMapPage() {
   }, []);
 
   useEffect(() => { analysisModeRef.current = analysisMode; }, [analysisMode]);
+  useEffect(() => { intersectsModeRef.current = intersectsMode; }, [intersectsMode]);
 
   useEffect(() => {
     const group = analysisGroup.current;
@@ -152,7 +265,13 @@ function ArcGISMapPage() {
       L.circle(analysisCenter, { radius: radiusKm * 1000, color: '#a5b4fc', weight: 2, dashArray: '6 6', fillColor: '#818cf8', fillOpacity: 0.08 }).addTo(group);
       L.circleMarker(analysisCenter, { radius: 6, color: '#0b0e14', weight: 2, fillColor: '#c4b5fd', fillOpacity: 1 }).bindTooltip('Tâm vùng phân tích').addTo(group);
     }
-  }, [analysisCenter, radiusKm]);
+    if (intersectsPoints.length >= 2) {
+      const line = [...intersectsPoints, ...(intersectsPoints.length >= 3 ? [intersectsPoints[0]] : [])];
+      L.polyline(line, { color: '#fb7185', weight: 2, dashArray: '6 5' }).addTo(group);
+      intersectsPoints.forEach((point, index) => L.circleMarker(point, { radius: 4, color: '#0b0e14', weight: 1.5, fillColor: '#fda4af', fillOpacity: 1 }).bindTooltip(`Điểm ${index + 1}`).addTo(group));
+      if (intersectsPoints.length >= 3) L.polygon(intersectsPoints, { color: '#fb7185', weight: 2, fillColor: '#fb7185', fillOpacity: 0.12 }).addTo(group);
+    }
+  }, [analysisCenter, radiusKm, intersectsPoints]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -186,6 +305,7 @@ function ArcGISMapPage() {
       });
       casing.addTo(group);
       const polygon = L.geoJSON(feature, {
+        bubblingMouseEvents: false,
         style: {
           color: active ? '#facc15' : '#111827',
           weight: active ? 5 : 3,
@@ -211,6 +331,7 @@ function ArcGISMapPage() {
         weight: 2.5,
         fillColor: color,
         fillOpacity: 1,
+        bubblingMouseEvents: false,
       }).bindPopup(popup).addTo(group);
     });
 
@@ -241,10 +362,10 @@ function ArcGISMapPage() {
     if (feature) {
       const center = featureCenter(feature);
       mapRef.current?.flyTo(center, Math.max(mapRef.current.getZoom(), 17), { duration: 0.55 });
-    } else if (selectedCode) {
+    } else if (selectedCode && !loading) {
       setSelectedCode('');
     }
-  }, [filtered, selectedCode]);
+  }, [filtered, selectedCode, loading]);
 
   function selectFeature(feature) {
     const center = featureCenter(feature);
@@ -256,6 +377,9 @@ function ArcGISMapPage() {
   function showArchipelagoRegion() {
     setAnalysisMode(false);
     setAnalysisCenter(null);
+    setIntersectsMode(false);
+    setIntersectsPoints([]);
+    setIntersectsPolygon(null);
     setSelectedCode('');
     mapRef.current?.flyTo([13.2, 112.8], 5, { duration: 0.7 });
   }
@@ -263,6 +387,9 @@ function ArcGISMapPage() {
   function showPropertyRegion() {
     setAnalysisMode(false);
     setAnalysisCenter(null);
+    setIntersectsMode(false);
+    setIntersectsPoints([]);
+    setIntersectsPolygon(null);
     setSelectedCode('');
     const bounds = L.geoJSON({ type: 'FeatureCollection', features }).getBounds();
     if (bounds.isValid()) mapRef.current?.fitBounds(bounds.pad(0.12), { maxZoom: 17, animate: true });
@@ -271,10 +398,10 @@ function ArcGISMapPage() {
   return (
     <main className="min-h-screen bg-canvas text-slate-100">
       <div className="mx-auto max-w-[1500px] px-4 pb-8 pt-5 sm:px-7 lg:px-10">
-        <MainNavigation rightSlot={<span className="hidden rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-xs text-amber-100/70 sm:inline-flex"><span className="mr-2 h-1.5 w-1.5 rounded-full bg-amber-300" />{basemapMode === 'satellite' ? 'Ảnh vệ tinh Esri' : 'Bản đồ địa hình Esri'} · {features.length} thửa</span>} />
+        <MainNavigation rightSlot={<span className="hidden rounded-full border border-emerald-200/40 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-800 sm:inline-flex">{features.length} thửa có vị trí</span>} />
 
         <section className="mb-5 mt-7 flex flex-col justify-between gap-3 sm:flex-row sm:items-end">
-          <div><p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Không gian địa lý</p><h1 className="mt-2 text-3xl font-medium tracking-tight text-white">Bản đồ bất động sản</h1><p className="mt-2 text-sm text-slate-400">Chọn một thửa để xem thông tin. Điểm đánh dấu là tâm ước tính từ ranh giới mẫu.</p></div>
+          <div><p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Không gian địa lý</p><h1 className="mt-2 text-3xl font-medium tracking-tight text-white">Bản đồ bất động sản</h1><p className="mt-2 text-sm text-slate-400">Khám phá vị trí và ranh giới từng thửa; chọn một thửa để xem hồ sơ hoặc tìm quanh một khu vực.</p></div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={showArchipelagoRegion} className="rounded-lg border border-amber-200/20 bg-amber-200/[0.04] px-3 py-2.5 text-sm text-amber-100 transition hover:bg-amber-200/[0.1]">Hoàng Sa · Trường Sa</button>
             <button type="button" onClick={showPropertyRegion} className="rounded-lg border border-white/[0.1] px-3 py-2.5 text-sm text-slate-300 transition hover:border-indigo-300/30 hover:text-white">Vùng hồ sơ</button>
@@ -282,35 +409,42 @@ function ArcGISMapPage() {
           </div>
         </section>
 
+        <PageGuide steps={['Tìm theo mã, địa chỉ hoặc chủ hồ sơ rồi chọn kết quả để xem vị trí.', 'Chọn “Tìm theo bán kính” và bấm bản đồ, hoặc vẽ vùng khép kín để lọc các thửa bên trong.', 'Đổi giữa bản đồ đường phố và ảnh vệ tinh; chọn “Vùng hồ sơ” để quay lại nơi có dữ liệu.']} note="Bản đồ hiển thị dữ liệu hồ sơ đã lưu. Nếu chưa thấy thửa, hãy thử tải lại hoặc kiểm tra bộ lọc." />
+
+        {apiError && <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-rose-200/15 bg-rose-200/[0.04] px-4 py-3 text-sm text-rose-100/85"><span>{apiError}</span><div className="flex gap-2"><a href="/login" className="rounded-lg border border-white/10 px-3 py-2 text-xs text-slate-200 hover:bg-white/[0.05]">Đăng nhập</a><button type="button" onClick={() => setReloadKey((key) => key + 1)} className="rounded-lg bg-rose-200/10 px-3 py-2 text-xs text-rose-100 hover:bg-rose-200/15">Thử lại</button></div></div>}
+
         <section className="grid gap-4 lg:grid-cols-[330px_minmax(0,1fr)]">
           <aside className="order-2 overflow-hidden rounded-2xl border border-white/[0.08] bg-panel/70 lg:order-1">
             <div className="border-b border-white/[0.07] p-4">
               <div className="flex items-center justify-between"><div><h2 className="text-sm font-medium">Thửa đất</h2><p className="mt-1 text-xs text-slate-500">{filtered.length} kết quả trên bản đồ</p></div><span className="rounded-md bg-white/[0.04] px-2 py-1 font-mono text-[11px] text-slate-500">EPSG:4326</span></div>
               <div className="mt-3 rounded-lg border border-indigo-300/10 bg-indigo-300/[0.035] p-3">
-                <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium text-slate-200">Phân tích vùng lân cận</p><button type="button" aria-pressed={analysisMode} onClick={() => { setAnalysisMode((active) => !active); setAnalysisCenter(null); }} className={`rounded-md px-2.5 py-1.5 text-[11px] ${analysisMode ? 'bg-indigo-300 text-slate-950' : 'border border-white/10 text-slate-300 hover:text-white'}`}>{analysisMode ? 'Đang chọn điểm' : 'Chọn trên bản đồ'}</button></div>
-                <label className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">Bán kính<select value={radiusKm} onChange={(event) => setRadiusKm(Number(event.target.value))} className="rounded-md border border-white/[0.09] bg-[#0b0e14] px-2 py-1.5 text-xs text-slate-200"><option value={0.5}>500 m</option><option value={1}>1 km</option><option value={2}>2 km</option><option value={5}>5 km</option><option value={10}>10 km</option></select></label>
-                {analysisCenter ? <p className="mt-2 text-[10px] leading-4 text-slate-500">{filtered.length} hồ sơ trong vùng {distanceFormat.format(radiusKm)} km quanh điểm đã chọn. Tính theo tâm ước tính của ranh giới mẫu.</p> : <p className="mt-2 text-[10px] leading-4 text-slate-500">Chọn chế độ, rồi bấm vào bản đồ để lọc các hồ sơ gần một vị trí.</p>}
-                {analysisCenter && <button type="button" onClick={() => setAnalysisCenter(null)} className="mt-2 text-[11px] text-indigo-200 hover:text-white">Xóa vùng phân tích</button>}
+                <p className="text-xs font-medium text-slate-200">Truy vấn không gian</p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button type="button" aria-pressed={analysisMode} onClick={() => { const next = !analysisMode; setAnalysisMode(next); setIntersectsMode(false); setAnalysisCenter(null); setIntersectsPoints([]); setIntersectsPolygon(null); setIntersectsMatches(null); }} className={`rounded-md px-2 py-2 text-[11px] ${analysisMode ? 'bg-indigo-300 text-slate-950' : 'border border-white/10 text-slate-300 hover:text-white'}`}>{analysisMode ? 'Chọn tâm trên bản đồ…' : 'Tìm theo bán kính'}</button>
+                  <button type="button" aria-pressed={intersectsMode} onClick={() => { const next = !intersectsMode; setIntersectsMode(next); setAnalysisMode(false); setAnalysisCenter(null); setIntersectsPoints([]); setIntersectsPolygon(null); setIntersectsMatches(null); setIntersectsError(''); }} className={`rounded-md px-2 py-2 text-[11px] ${intersectsMode ? 'bg-cyan-200 text-slate-950' : 'border border-white/10 text-slate-300 hover:text-white'}`}>{intersectsMode ? 'Đang vẽ vùng…' : 'Vẽ vùng tìm thửa'}</button>
+                </div>
+                {analysisMode && <label className="mt-3 flex items-center justify-between gap-3 text-[11px] text-slate-500">Bán kính<select value={radiusKm} onChange={(event) => setRadiusKm(Number(event.target.value))} className="rounded-md border border-white/[0.09] bg-[#0b0e14] px-2 py-1.5 text-xs text-slate-200"><option value={0.5}>500 m</option><option value={1}>1 km</option><option value={2}>2 km</option><option value={5}>5 km</option><option value={10}>10 km</option></select></label>}
+                {analysisMode && (analysisCenter ? <p className="mt-2 text-[10px] leading-4 text-slate-500">{radiusLoading ? 'Đang truy vấn PostGIS…' : radiusError || `${radiusMatches?.size || 0} hồ sơ trong bán kính ${distanceFormat.format(radiusKm)} km từ PostGIS; ${filtered.length} hồ sơ khớp bộ lọc.`}</p> : <p className="mt-2 text-[10px] leading-4 text-slate-500">Bấm lên bản đồ để chọn tâm tìm kiếm.</p>)}
+                {intersectsMode && <><p className="mt-2 text-[10px] leading-4 text-slate-500">Bấm ít nhất 3 điểm để vẽ polygon, sau đó tìm các thửa giao với vùng đó ({intersectsPoints.length} điểm).</p><div className="mt-2 flex gap-2"><button type="button" disabled={!intersectsPoints.length || intersectsPolygon} onClick={() => setIntersectsPoints((points) => points.slice(0, -1))} className="rounded-md border border-white/10 px-2 py-1.5 text-[10px] text-slate-300 disabled:opacity-40">Lùi 1 điểm</button><button type="button" disabled={intersectsPoints.length === 0} onClick={() => { setIntersectsPoints([]); setIntersectsPolygon(null); setIntersectsMatches(null); setIntersectsError(''); }} className="rounded-md border border-white/10 px-2 py-1.5 text-[10px] text-slate-300 disabled:opacity-40">Xóa vùng</button><button type="button" disabled={intersectsPoints.length < 3 || intersectsLoading} onClick={() => { const ring = intersectsPoints.map(([lat, lng]) => [lng, lat]); ring.push(ring[0]); setIntersectsPolygon({ type: 'Polygon', coordinates: [ring] }); setSelectedCode(''); }} className="ml-auto rounded-md bg-cyan-200 px-2 py-1.5 text-[10px] font-medium text-slate-950 disabled:opacity-40">{intersectsLoading ? 'Đang tìm…' : 'Tìm thửa giao vùng'}</button></div>{intersectsPolygon && <p className="mt-2 text-[10px] leading-4 text-slate-500">{intersectsLoading ? 'Đang truy vấn PostGIS…' : intersectsError || `${intersectsMatches?.size || 0} thửa giao với vùng; ${filtered.length} thửa khớp bộ lọc.`}</p>}</>}
               </div>
               <input value={query} onChange={(event) => { setQuery(event.target.value); setSelectedCode(''); }} placeholder="Tìm mã, địa chỉ, chủ hồ sơ..." className="mt-4 w-full rounded-lg border border-white/[0.09] bg-[#0b0e14] px-3 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-indigo-300/40" aria-label="Tìm thửa đất" />
               <select value={type} onChange={(event) => { setType(event.target.value); setSelectedCode(''); }} className="mt-2 w-full rounded-lg border border-white/[0.09] bg-[#0b0e14] px-3 py-2.5 text-sm text-slate-300 outline-none focus:border-indigo-300/40" aria-label="Lọc loại bất động sản"><option value="all">Tất cả loại hình</option>{Object.entries(typeLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
             </div>
             <div className="max-h-[360px] divide-y divide-white/[0.05] overflow-y-auto lg:max-h-[calc(100vh-350px)]">
-              {filtered.map((feature) => {
+              {loading ? <div className="px-4 py-12 text-center text-sm text-slate-500">Đang tải ranh giới từ PostGIS…</div> : filtered.map((feature) => {
                 const p = feature.properties;
                 const selected = p.code === selectedCode;
-                const center = featureCenter(feature);
-                const distance = analysisCenter ? distanceInKm([analysisCenter.lat, analysisCenter.lng], [center.lat, center.lng]) : null;
-                return <button type="button" key={p.code} onClick={() => selectFeature(feature)} className={`block w-full px-4 py-3.5 text-left transition ${selected ? 'bg-indigo-300/[0.09]' : 'hover:bg-white/[0.025]'}`}><div className="flex items-center justify-between gap-2"><span className="text-sm font-medium text-slate-200">{p.code}</span><FeatureBadge type={p.type} /></div><p className="mt-1.5 truncate text-xs text-slate-400">{p.address}</p><p className="mt-1 text-[11px] text-slate-600">{areaFormat.format(p.area)} m² · {p.owner_name}{distance !== null && <span className="text-indigo-200"> · {distanceFormat.format(distance)} km</span>}</p></button>;
+                const distance = analysisCenter ? radiusDistances.get(p.code) : null;
+                return <button type="button" key={p.code} onClick={() => selectFeature(feature)} className={`block w-full px-4 py-3.5 text-left transition ${selected ? 'bg-indigo-300/[0.09]' : 'hover:bg-white/[0.025]'}`}><div className="flex items-center justify-between gap-2"><span className="text-sm font-medium text-slate-200">{p.code}</span><FeatureBadge type={p.type} /></div><p className="mt-1.5 truncate text-xs text-slate-400">{p.address}</p><p className="mt-1 text-[11px] text-slate-600">{areaFormat.format(p.area)} m² · {p.owner_name}{distance !== null && distance !== undefined && <span className="text-indigo-200"> · {distanceFormat.format(distance / 1000)} km</span>}</p></button>;
               })}
-              {!filtered.length && <div className="px-4 py-12 text-center text-sm text-slate-500">Không tìm thấy thửa phù hợp.</div>}
+              {!loading && !filtered.length && <div className="px-4 py-12 text-center text-sm text-slate-500">{analysisCenter && radiusLoading || intersectsPolygon && intersectsLoading ? 'Đang truy vấn khu vực…' : analysisCenter && radiusError || intersectsPolygon && intersectsError ? 'Không tải được kết quả truy vấn.' : 'Không tìm thấy thửa phù hợp.'}</div>}
             </div>
-            <div className="border-t border-white/[0.07] px-4 py-3 text-[11px] leading-5 text-slate-500">Ranh giới và mã thửa lấy từ GeoJSON mẫu. Mã hiện trực tiếp khi phóng to; quần đảo được gắn nhãn tiếng Việt trong ứng dụng.</div>
+            <div className="border-t border-white/[0.07] px-4 py-3 text-[11px] leading-5 text-slate-500">Phóng to để đọc mã thửa. Nhãn Hoàng Sa và Trường Sa được hiển thị bằng tiếng Việt.</div>
           </aside>
 
           <div className="order-1 overflow-hidden rounded-2xl border border-white/[0.08] bg-[#0b0e14] lg:order-2">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-4 py-3"><div className="flex flex-wrap items-center gap-2 text-xs text-slate-400"><span className="h-2 w-2 rounded-full bg-indigo-300" />Ranh giới thửa <span className="mx-1 text-slate-700">·</span><span className="h-2 w-2 rounded-full border border-slate-950 bg-cyan-200" />Tâm ước tính <span className="mx-1 text-slate-700">·</span><span className="rounded-full border border-amber-200/30 px-2 py-0.5 text-[10px] text-amber-100">Mã thửa hiện khi phóng to</span></div><div className="flex flex-wrap items-center gap-3"><div role="group" aria-label="Chế độ bản đồ" className="inline-flex rounded-lg border border-white/[0.1] bg-[#0b0e14] p-0.5"><button type="button" aria-pressed={basemapMode === 'default'} onClick={() => setBasemapMode('default')} className={`rounded-md px-3 py-1.5 text-xs transition ${basemapMode === 'default' ? 'bg-white/[0.12] text-white' : 'text-slate-500 hover:text-slate-300'}`}>Mặc định</button><button type="button" aria-pressed={basemapMode === 'satellite'} onClick={() => setBasemapMode('satellite')} className={`rounded-md px-3 py-1.5 text-xs transition ${basemapMode === 'satellite' ? 'bg-white/[0.12] text-white' : 'text-slate-500 hover:text-slate-300'}`}>Vệ tinh</button></div><span className="text-[11px] text-slate-600">Bấm polygon hoặc điểm để xem popup</span></div></div>
-            <div ref={mapNode} className={`h-[55vh] min-h-[420px] w-full bg-[#171b24] sm:h-[62vh] lg:h-[calc(100vh-250px)] lg:min-h-[560px] ${analysisMode ? 'cursor-crosshair' : ''}`} aria-label="Bản đồ GIS các bất động sản mẫu" />
+            <div ref={mapNode} className={`h-[55vh] min-h-[420px] w-full bg-[#171b24] sm:h-[62vh] lg:h-[calc(100vh-250px)] lg:min-h-[560px] ${analysisMode || intersectsMode ? 'cursor-crosshair' : ''}`} aria-label="Bản đồ GIS các bất động sản" />
           </div>
         </section>
       </div>
