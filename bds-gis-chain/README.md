@@ -86,7 +86,7 @@ Sai thông tin hoặc tài khoản có role không hợp lệ trả HTTP 401 v�
 | `GET /api/properties*`, `GET /api/gis/*` | User hoặc Admin, cần Bearer token |
 | `POST`, `PUT`, `DELETE /api/properties*` | Bearer token + role Admin |
 
-API CRUD hồ sơ và GIS được khai báo trong `backend/src/routes/`. Không có tài khoản Admin mặc định hoặc API công khai tự nâng quyền; Admin phải được cấp bởi người vận hành trực tiếp trong database. Thay đổi role có hiệu lực khi token cũ hết hạn (tối đa một giờ), vì role nằm trong JWT.
+API CRUD hồ sơ, GIS và quản trị tài khoản được khai báo trong `backend/src/routes/`. Không có tài khoản Admin mặc định hoặc API công khai tự nâng quyền; Admin đầu tiên phải được cấp bởi người vận hành trực tiếp trong database. Middleware kiểm tra trạng thái và role hiện tại từ database trên mỗi request đã xác thực, nên đổi role có hiệu lực ngay với backend. Đăng xuất/đăng nhập lại để menu frontend cập nhật role đang lưu trong phiên.
 
 Chi tiết endpoint, tham số lọc, định dạng GeoJSON và ví dụ request xem tại [API.md](API.md).
 

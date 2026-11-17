@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import AccountMenu from '../components/AccountMenu.jsx';
+import PageGuide from '../components/PageGuide.jsx';
 import { clearAuthSession, fetchCurrentUser, getAuthToken, saveAuthSession } from '../lib/authSession.js';
 
 const authApi = {
@@ -101,7 +102,7 @@ export default function AuthPage({ initialMode = 'login' }) {
     } catch (error) {
       setResult({
         ok: false,
-        message: 'Không gọi được backend. Kiểm tra backend đang chạy ở cổng 4000 và route API đã được thêm.',
+        message: 'Chưa kết nối được dịch vụ tài khoản. Vui lòng thử lại sau ít phút hoặc liên hệ quản trị viên.',
         error: error.message,
       });
     } finally {
@@ -134,34 +135,32 @@ export default function AuthPage({ initialMode = 'login' }) {
           <div className="flex items-center gap-3"><AccountMenu /><a href="/" className="text-sm text-slate-500 transition hover:text-slate-200">← Trang chủ</a></div>
         </header>
 
-        <div className="grid overflow-hidden rounded-3xl border border-white/[0.09] bg-panel/90 shadow-2xl shadow-black/20 md:grid-cols-[0.9fr_1.1fr]">
-          <section className="hidden flex-col justify-between border-r border-white/[0.07] bg-white/[0.02] p-9 md:flex lg:p-12">
+        <PageGuide title="Đăng nhập trong vài bước" steps={mode === 'login' ? ['Nhập tên đăng nhập hoặc email đã đăng ký.', 'Nhập mật khẩu và chọn Đăng nhập.', 'Sau khi đăng nhập, trang Tổng quan sẽ mở tự động.'] : ['Chọn Tạo tài khoản.', 'Nhập tên đăng nhập, mật khẩu tối thiểu 12 ký tự và email nếu muốn.', 'Đăng ký xong, đăng nhập bằng tên đăng nhập hoặc email.']} note="Tài khoản mới bắt đầu với quyền người dùng thông thường. Quản trị viên sẽ cấp thêm quyền khi cần." />
+
+        <div className="mt-5 grid overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-xl shadow-slate-900/[0.06] md:grid-cols-[0.9fr_1.1fr]">
+          <section className="hidden flex-col justify-between border-r border-slate-200 bg-gradient-to-b from-indigo-50 to-white p-9 md:flex lg:p-12">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-200/15 bg-indigo-200/[0.05] px-3 py-1.5 text-xs text-indigo-100/80">
-                <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" /> Kiểm thử tích hợp API
+              <span className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-white px-3 py-1.5 text-xs font-medium text-indigo-700 shadow-sm">
+                <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" /> GIS-CHAIN · Không gian làm việc
               </span>
-              <h1 className="mt-8 text-3xl font-medium leading-tight tracking-tight text-white lg:text-4xl">
-                Đăng nhập vào không gian GIS-CHAIN.
+              <h1 className="mt-8 text-3xl font-semibold leading-tight tracking-tight text-slate-950 lg:text-4xl">
+                {mode === 'login' ? 'Chào mừng bạn trở lại.' : 'Tạo tài khoản GIS-CHAIN.'}
               </h1>
-              <p className="mt-4 max-w-sm text-sm leading-7 text-slate-400">
-                Form gửi trực tiếp JSON tới backend để nhóm kiểm tra luồng xác thực và phản hồi API.
+              <p className="mt-4 max-w-sm text-sm leading-7 text-slate-600">
+                Một nơi để tra cứu hồ sơ, xem ranh giới trên bản đồ và quản lý dữ liệu bất động sản.
               </p>
-              <ul className="mt-6 space-y-3 text-sm text-slate-300">
-                {['Quản lý hồ sơ trên bản đồ', 'Phân tích dữ liệu không gian', 'Xác minh tính toàn vẹn bằng blockchain'].map((item) => <li key={item} className="flex items-center gap-3"><span className="grid h-5 w-5 place-items-center rounded-full border border-emerald-200/20 text-[10px] text-emerald-200">✓</span>{item}</li>)}
+              <ul className="mt-6 space-y-3 text-sm text-slate-700">
+                {['Hồ sơ và vị trí được lưu tập trung', 'Thao tác phù hợp với quyền tài khoản', 'Đối chiếu blockchain sẽ có sau khi tích hợp'].map((item) => <li key={item} className="flex items-start gap-3"><span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-emerald-100 text-[10px] font-semibold text-emerald-700">✓</span>{item}</li>)}
               </ul>
-              <p className="mt-6 max-w-sm border-l-2 border-amber-200/30 pl-3 text-xs leading-5 text-amber-100/70">Hệ thống chỉ xác minh tính toàn vẹn dữ liệu, không xác minh quyền sở hữu pháp lý.</p>
+              <p className="mt-6 max-w-sm border-l-2 border-amber-400 pl-3 text-xs leading-5 text-amber-800">Thông tin hệ thống không thay thế việc xác minh quyền sở hữu pháp lý.</p>
             </div>
-            <div className="rounded-2xl border border-white/[0.07] bg-[#0b0e14]/70 p-4">
-              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500">Request hiện tại</p>
-              <p className="mt-2 font-mono text-xs text-indigo-200">POST {currentApi.path}</p>
-              <pre className="mt-3 overflow-x-auto text-xs leading-5 text-slate-400">{mode === 'register' ? `{
-  "username": "...",
-  "email": "... (tùy chọn)",
-  "password": "..."
-}` : `{
-  "username": "... hoặc email",
-  "password": "..."
-}`}</pre>
+            <div className="rounded-2xl border border-indigo-100 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-indigo-700">Quyền tài khoản</p>
+              <div className="mt-3 space-y-3 text-xs leading-5 text-slate-600">
+                <p><strong className="text-slate-800">User:</strong> tra cứu hồ sơ và sử dụng bản đồ GIS.</p>
+                <p><strong className="text-slate-800">Admin:</strong> quản lý hồ sơ, tài khoản và quyền truy cập.</p>
+                <p>Tài khoản mới bắt đầu với quyền User. Admin được cấp bởi người quản trị hệ thống.</p>
+              </div>
             </div>
           </section>
 
@@ -175,9 +174,9 @@ export default function AuthPage({ initialMode = 'login' }) {
             </div>
 
             <div>
-              <p className="text-xs font-medium uppercase tracking-[0.18em] text-indigo-200/75">Tài khoản</p>
-              <h2 className="mt-2 text-2xl font-medium tracking-tight text-white">{mode === 'login' ? 'Chào mừng trở lại' : 'Tạo tài khoản mới'}</h2>
-              <p className="mt-2 text-sm text-slate-400">{mode === 'login' ? 'Nhập thông tin để gửi yêu cầu đăng nhập.' : 'Tạo tài khoản thử nghiệm với API đăng ký.'}</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-indigo-700">Tài khoản GIS-CHAIN</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight text-slate-950">{mode === 'login' ? 'Đăng nhập' : 'Tạo tài khoản'}</h2>
+              <p className="mt-2 text-sm text-slate-600">{mode === 'login' ? 'Nhập thông tin tài khoản để tiếp tục.' : 'Điền thông tin cơ bản để tạo tài khoản mới.'}</p>
             </div>
 
             <form onSubmit={handleSubmit} className="mt-7 space-y-4">
@@ -215,7 +214,7 @@ export default function AuthPage({ initialMode = 'login' }) {
                 <p><code className="text-indigo-200">POST /api/auth/login</code> và <code className="text-indigo-200">POST /api/auth/register</code></p>
                 <p>Request: <code>{'{ username, password }'}</code>; đăng ký có thể gửi thêm email. Backend tự gán role mặc định.</p>
                 <p>Đăng nhập nhận token, sau đó frontend gọi <code>GET /api/auth/me</code>. JSON được hiển thị để đối chiếu nhưng JWT được ẩn.</p>
-                <p className="text-amber-100/70">Đây là hợp đồng frontend đề xuất để test; cần Đạt xác nhận tên endpoint và cấu trúc với backend.</p>
+                <p>Đăng ký mới được backend gán quyền User. Tác vụ quản trị chỉ dành cho tài khoản Admin.</p>
               </div>
             </details>
           </section>

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import MainNavigation from '../components/MainNavigation.jsx';
+import PageGuide from '../components/PageGuide.jsx';
 import { getAuthToken, getCachedUser } from '../lib/authSession.js';
 
 const areaFormat = new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 1 });
@@ -219,6 +220,15 @@ export default function VerifyPage() {
             </button>
           </div>
         </section>
+
+        <PageGuide
+          steps={[
+            'Chọn hồ sơ để đối chiếu dữ liệu hiện tại với Smart Contract.',
+            'Kiểm tra mã băm và lịch sử phiên bản đã ghi trên blockchain.',
+            'Quản trị viên có thể đăng ký phiên bản mới sau khi dữ liệu được kiểm tra.',
+          ]}
+          note="Kết quả xác minh phản ánh tính toàn vẹn dữ liệu, không xác minh quyền sở hữu pháp lý."
+        />
 
         {/* Bố cục 2 cột: Danh sách hồ sơ bên trái - Chi tiết đối chiếu bên phải */}
         <div className="mt-8 grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
