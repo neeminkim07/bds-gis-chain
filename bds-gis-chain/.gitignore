@@ -6,3 +6,6 @@ uploads/
 contracts/artifacts/
 contracts/cache/
 /PROJECT_STATUS.md
+docker-compose.override.yml/
+.env.example
+.vcode
