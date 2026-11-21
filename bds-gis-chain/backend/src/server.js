@@ -5,7 +5,6 @@ const authRoutes = require('./routes/auth');
 const propertyRoutes = require('./routes/properties');
 const gisRoutes = require('./routes/gis');
 const userRoutes = require('./routes/users');
-const verifyRoutes = require('./routes/verify');
 const { requireAuth } = require('./auth');
 
 const app = express();
@@ -36,7 +35,6 @@ app.use('/api', requireAuth);
 app.use('/api/users', userRoutes);
 app.use('/api/properties', propertyRoutes);
 app.use('/api/gis', gisRoutes);
-app.use('/api/verify', verifyRoutes);
 app.use('/api', (_req, res) => res.status(404).json({
   ok: false,
   message: 'API endpoint không tồn tại',
